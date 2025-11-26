@@ -1,0 +1,58 @@
+# Pre-merge checks
+
+# This workflow is triggered on pull requests to main and release branches and
+# - scans GitHub Actions workflows for security issues (Zizmor)
+# - analyzes Python code security in changed files (Bandit)
+
+name: "Pre-merge checks"
+
+on:
+  pull_request:
+    branches:
+      - main
+      - releases/**
+
+permissions: {} # No permissions by default
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.after }}
+  cancel-in-progress: true
+
+jobs:
+  zizmor-scan-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          # FIXME: needed for tj-actions/changed-files to gather changed files, once repository becomes public this argument should be set to false
+          persist-credentials: true
+      - name: Run Zizmor scan
+        uses: open-edge-platform/geti-ci/actions/zizmor@829f7148f9f70bd4ffbb367f7374d78c32aef2a2
+        with:
+          scan-scope: "changed"
+          severity-level: "LOW"
+          confidence-level: "LOW"
+          fail-on-findings: true
+          output-format: "plain" # Use plain text output format to omit uploading code scanning results to Security tab
+
+  bandit-scan-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          # FIXME: needed for tj-actions/changed-files to gather changed files, once repository becomes public this argument should be set to false
+          persist-credentials: true
+      - name: Run Bandit scan
+        uses: open-edge-platform/geti-ci/actions/bandit@829f7148f9f70bd4ffbb367f7374d78c32aef2a2
+        with:
+          scan-scope: "changed"
+          severity-level: "LOW"
+          confidence-level: "LOW"
+          fail-on-findings: true
+          output-format: "txt" # Use plain text output format to omit uploading code scanning results to Security tab
