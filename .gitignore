@@ -9,6 +9,10 @@ results/**/*.log
 results/**/*.csv
 runs/
 
+benchmark_results*/
+
+zto/*.h265
+
 html/data.json
 html/system_info.json
 
