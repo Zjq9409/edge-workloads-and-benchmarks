@@ -12,6 +12,7 @@ runs/
 benchmark_results*/
 
 zto/*.h265
+zto/.cache/
 
 html/data.json
 html/system_info.json
