@@ -9,7 +9,8 @@ results/**/*.log
 results/**/*.csv
 runs/
 
-benchmark_results*/
+ov_benchmark/benchmark_results*/
+decode/decode_results*/
 
 media-downloader/*.h265
 zto/.cache/

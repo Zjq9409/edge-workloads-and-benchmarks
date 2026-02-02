@@ -60,28 +60,41 @@ fi
 docker_args+=(intel/dlstreamer:latest)
 
 transcode_to_h265() {
-    local in="$1" out="$2"
+    local in="$1" out="$2" width="${3:-1920}" height="${4:-1080}" fps="${5:-30}"
     "${docker_args[@]}" gst-launch-1.0 \
         filesrc location="/home/dlstreamer/media/mp4/${in}" ! \
 	decodebin3 ! \
-	videorate ! "video/x-raw,framerate=30/1" ! \
+	videorate ! "video/x-raw,framerate=${fps}/1" ! \
 	vapostproc ! \
-	capsfilter caps="video/x-raw(memory:VAMemory),pixel-aspect-ratio=1/1,width=1920,height=1080,framerate=30/1" ! \
+	capsfilter caps="video/x-raw(memory:VAMemory),pixel-aspect-ratio=1/1,width=${width},height=${height},framerate=${fps}/1" ! \
 	vah265enc bitrate=2000 b-frames=0 key-int-max=60 ! \
 	h265parse ! \
 	filesink location="/home/dlstreamer/media/hevc/${out}"
 }
 
-# Convert apple and bear videos into H265 1080p30 2Mbps video files with no B-frames
-[[ -f "${mediadir}/hevc/apple.h265" ]] || transcode_to_h265 "apple.mp4" "apple.h265"
-[[ -f "${mediadir}/hevc/bears.h265" ]] || transcode_to_h265 "bears.mp4" "bears.h265"
+# Convert apple and bear videos into H265 2Mbps video files with no B-frames
+# apple: 1920x1080@30fps (original), apple_720p25: 1280x720@25fps (new), bears: 1920x1080@30fps
+[[ -f "${mediadir}/hevc/apple.h265" ]] || transcode_to_h265 "apple.mp4" "apple.h265" 1920 1080 30
+[[ -f "${mediadir}/hevc/apple_720p25.h265" ]] || transcode_to_h265 "apple.mp4" "apple_720p25.h265" 1280 720 25
+[[ -f "${mediadir}/hevc/bears.h265" ]] || transcode_to_h265 "bears.mp4" "bears.h265" 1920 1080 30
 
 : > "${mediadir}/hevc/apple_loop100.h265"
+: > "${mediadir}/hevc/apple_720p25_loop30.h265"
 : > "${mediadir}/hevc/bears_loop100.h265"
 
+# Loop apple 100 times, apple_720p25 50 times, bears 100 times
 for _ in $(seq 100);
 do
     cat "${mediadir}/hevc/apple.h265" >> "${mediadir}/hevc/apple_loop100.h265"
+done
+
+for _ in $(seq 30);
+do
+    cat "${mediadir}/hevc/apple_720p25.h265" >> "${mediadir}/hevc/apple_720p25_loop30.h265"
+done
+
+for _ in $(seq 100);
+do
     cat "${mediadir}/hevc/bears.h265" >> "${mediadir}/hevc/bears_loop100.h265"
 done
 
@@ -95,5 +108,5 @@ cp "${mediadir}/hevc/bears_loop100.h265" "${pipedir}/light/video/bears.h265"
 cp "${mediadir}/hevc/apple_loop100.h265" "${pipedir}/medium/video/apple.h265"
 cp "${mediadir}/hevc/bears_loop100.h265" "${pipedir}/heavy/video/bears.h265"
 
-echo "[ Info ] Transcoded and looped: apple.h265 (x100), bears.h265 (x100)"
+echo "[ Info ] Transcoded and looped: apple.h265 1920x1080@30fps (x100), apple_720p25.h265 1280x720@25fps (x50), bears.h265 1920x1080@30fps (x100)"
 echo "[ Success ] Video files successfully converted. Ending media transcode."
