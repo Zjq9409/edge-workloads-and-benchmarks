@@ -11,7 +11,7 @@ runs/
 
 benchmark_results*/
 
-zto/*.h265
+media-downloader/*.h265
 zto/.cache/
 
 html/data.json

@@ -15,11 +15,11 @@ if [[ -z "$OUTPUT_FILE" ]] || [[ -z "$DEVICE_ID" ]]; then
 fi
 
 # Metrics to collect
-METRICS="0,1,2,3,4,18,22,24"
+METRICS="0,1,2,3,4,18,22,24,25,26,27,36"
 
 # Initialize CSV with header if it doesn't exist
 if [[ ! -f "$OUTPUT_FILE" ]]; then
-    echo "Model Name,Batch Size,Timestamp,DeviceId,GPU Utilization (%),GPU Power (W),GPU Frequency (MHz),GPU Core Temp (°C),GPU Mem Temp (°C),GPU Memory Used (MiB),Compute Engine Util (%),Media Decoder Util (%)" > "$OUTPUT_FILE"
+    echo "Model Name,Batch Size,Timestamp,DeviceId,GPU Utilization (%),GPU Power (W),GPU Frequency (MHz),GPU Core Temp (°C),GPU Mem Temp (°C),GPU Memory Used (MiB),Compute Engine Util (%),Media Decoder Util (%),Encoder Engine 0 (%),Encoder Engine 1 (%),Copy Engine 0 (%),Media Enhancement Engine 0 (%),Media Enhancement Engine 1 (%),Media Engine Frequency (MHz)" > "$OUTPUT_FILE"
 fi
 
 # Run xpu-smi and parse output
@@ -28,7 +28,7 @@ while true; do
     TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
     
     # Run xpu-smi and capture output (remove header, get data line)
-    DATA=$(xpu-smi dump -d "$DEVICE_ID" -m "$METRICS" -n 1 2>/dev/null | grep -v "Timestamp" | tail -n 1 | tr -s ' ' | sed 's/^ //g')
+    DATA=$(sudo xpu-smi dump -d "$DEVICE_ID" -m "$METRICS" -n 1 2>/dev/null | grep -v "Timestamp" | tail -n 1 | tr -s ' ' | sed 's/^ //g')
     
     if [[ -n "$DATA" ]]; then
         # Append to CSV with model name and batch size

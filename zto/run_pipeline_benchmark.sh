@@ -6,29 +6,34 @@
 set -e
 
 # 8个流，分成2个进程（每个进程4个流）
-#./run_pipeline_benchmark.sh -v /home/dlstreamer/1280x720_25fps_medium.h265 -n 8 -P 2 -d GPU.0 -i 120
+#./run_pipeline_benchmark.sh -v /home/dlstreamer/work/media-downloader/1280x720_25fps_medium.h265 -n 8 -P 2 -d GPU.0 -i 120
 
 # 完整AI推理，48个流，6个进程（每个进程4个流）
-#./run_pipeline_benchmark.sh -v /home/dlstreamer/1280x720_25fps_medium.h265 -m /home/dlstreamer/FP16/yolo11n.xml -n 48 -P 6 -d GPU.0 -b 32  -a  -p /home/dlstreamer/add_data.py -q localhost:1883 -i 120
+#./run_pipeline_benchmark.sh -v /home/dlstreamer/work/media-downloader/1280x720_25fps_medium.h265 -m /home/dlstreamer/work/model-conversion/models/yolo11n/yolo11n.xml -n 48 -P 6 -d GPU.0 -b 32  -a  -p /home/dlstreamer/add_data.py -q localhost:1883 -i 120
 
 # 默认单进程（与原来一样）
-#./run_pipeline_benchmark.sh -v /home/dlstreamer/1280x720_25fps_medium.h265 -n 8 -d GPU.0 -i 120
+#./run_pipeline_benchmark.sh -v /home/dlstreamer/work/media-downloader/1280x720_25fps_medium.h265 -n 8 -d GPU.0 -i 120
 
-#./run_pipeline_benchmark.sh -v /home/dlstreamer/1280x720_25fps_medium.h265 -m /home/intel/media_ai/edge-workloads-and-benchmarks_master/model-conversion/models/yolo11n/yolo11n_int8.xml -n 80 -P 6 -d GPU.1 -b 32  -a  -p /home/dlstreamer/add_data.py -q localhost:1883 -i 120
-# ./run_pipeline_benchmark.sh -v /home/dlstreamer/1280x720_25fps_medium.h265 -m /home/dlstreamer/FP16/yolo11n.xml -n 48 -P 4 -d GPU.1 -b 64  -a  -p /home/dlstreamer/add_data.py -q localhost:1883 -i 120
+#./run_pipeline_benchmark.sh -v /home/dlstreamer/work/media-downloader/1280x720_25fps_medium.h265 -m /home/dlstreamer/work/model-conversion/models/yolo11n/yolo11n_int8.xml -n 80 -P 6 -d GPU.1 -b 32  -a  -p /home/dlstreamer/add_data.py -q localhost:1883 -i 120
+# ./run_pipeline_benchmark.sh -v /home/dlstreamer/work/media-downloader/1280x720_25fps_medium.h265 -m /home/dlstreamer/work/model-conversion/models/yolo11n/yolo11n.xml -n 48 -P 4 -d GPU.1 -b 64  -a  -p /home/dlstreamer/add_data.py -q localhost:1883 -i 120
 
 # Configuration
 IMAGE="intel/dlstreamer:2025.2.0-ubuntu24"
-MOUNT_DIR="$(pwd)"
+MOUNT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CONTAINER_NAME="benchmark_$$"
 DURATION=120
 TARGET_FPS=25
-NUM_STREAMS=1NUM_PROCESSES=1DEVICE="GPU.0"
-VIDEO_FILE="/home/dlstreamer/1280x720_25fps.h265"
-MODEL_PATH="/home/intel/media_ai/edge-workloads-and-benchmarks/pipelines/light/detection/yolov11n_640x640/INT8/yolo11n.xml"
+NUM_STREAMS=1
+NUM_PROCESSES=1
+DEVICE="GPU.0"
+VIDEO_FILE="/home/dlstreamer/work/media-downloader/1280x720_25fps_medium.h265"
+MODEL_PATH="/home/dlstreamer/work/pipelines/light/detection/yolov11n_640x640/INT8/yolo11n.xml"
 ENABLE_AI=false
 MQTT_ADDRESS="localhost:1883"
 PYTHON_MODULE=""
+AUTO_TUNE=false
+TUNE_THRESHOLD=25.0
+TUNE_SHORT_DURATION=30
 
 # Color output
 GREEN='\033[0;32m'
@@ -42,7 +47,7 @@ usage() {
 Usage: $0 [OPTIONS]
 
 Options:
-  -v <video>         Video file path (default: 1280x720_25fps_medium.h265)
+  -v <video>         Video file path (default: media-downloader/1280x720_25fps_medium.h265)
   -m <model>         Model XML path (default: /home/dlstreamer/FP16/yolo11n.xml)
   -n <num_streams>   Number of streams (default: 1)
   -P <num_processes> Number of gst-launch-1.0 processes (default: 1, streams distributed across processes)
@@ -54,6 +59,8 @@ Options:
   -a                 Enable AI inference pipeline (gvadetect + gvatrack + metadata)
   -p <python>        Python module path for gvapython (e.g., /home/dlstreamer/add_data.py)
   -q <mqtt>          MQTT broker address (default: localhost:1883)
+  -T                 Enable auto-tune mode to find maximum stream count
+  -s <threshold>     FPS threshold for auto-tune mode (default: 25.0)
   -h                 Show this help message
 
 Examples:
@@ -66,6 +73,10 @@ Examples:
   With MQTT publishing:
     $0 -v video.h265 -m FP16/yolo11n.xml -n 4 -a -p /home/dlstreamer/add_data.py -q localhost:1883
 
+  Auto-tune mode (find maximum streams):
+    $0 -v video.h265 -m FP16/yolo11n.xml -n 40 -d GPU.1 -b 32 -a -T
+    $0 -v video.h265 -n 50 -d GPU.0 -T
+
 EOF
     exit 0
 }
@@ -73,7 +84,7 @@ EOF
 # Parse arguments
 GPU_CARD=""
 BATCH_SIZE=1
-while getopts "v:m:n:P:d:g:i:t:b:p:q:ah" opt; do
+while getopts "v:m:n:P:d:g:i:t:b:p:q:s:Tah" opt; do
     case $opt in
         v) VIDEO_FILE="$OPTARG" ;;
         m) MODEL_PATH="$OPTARG" ;;
@@ -87,10 +98,103 @@ while getopts "v:m:n:P:d:g:i:t:b:p:q:ah" opt; do
         a) ENABLE_AI=true ;;
         p) PYTHON_MODULE="$OPTARG" ;;
         q) MQTT_ADDRESS="$OPTARG" ;;
+        T) AUTO_TUNE=true ;;
+        s) TUNE_THRESHOLD="$OPTARG" ;;
         h) usage ;;
         *) usage ;;
     esac
 done
+
+# Auto-tune mode function
+run_auto_tune() {
+    local current_streams=$NUM_STREAMS
+    local max_streams=0
+    local max_streams_fps=0
+    local step_size=10
+    local test_duration=$TUNE_SHORT_DURATION
+    
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}Auto-Tune Mode: Finding Maximum Streams${NC}"
+    echo -e "${GREEN}========================================${NC}"
+    echo "Starting streams: ${current_streams}"
+    echo "FPS threshold: ${TUNE_THRESHOLD}"
+    echo "Test duration: ${test_duration}s per iteration"
+    echo "Device: ${DEVICE}"
+    echo ""
+    
+    while true; do
+        # Calculate processes for current streams (about 8 streams per process)
+        local processes=$(( (current_streams + 7) / 8 ))
+        
+        echo -e "${YELLOW}[TUNE]${NC} Testing ${current_streams} streams with ${processes} processes..."
+        
+        # Run benchmark with short duration
+        local result_fps=$(DURATION=$test_duration NUM_STREAMS=$current_streams NUM_PROCESSES=$processes \
+            bash "$0" -v "$VIDEO_FILE" -m "$MODEL_PATH" -n $current_streams -P $processes \
+            -d "$DEVICE" -b "$BATCH_SIZE" -i $test_duration -t "$TARGET_FPS" \
+            $([ "$ENABLE_AI" = true ] && echo "-a") \
+            $([ -n "$PYTHON_MODULE" ] && echo "-p $PYTHON_MODULE") \
+            $([ -n "$MQTT_ADDRESS" ] && echo "-q $MQTT_ADDRESS") \
+            2>/dev/null | tail -1)
+        
+        # Check if result is valid
+        if [[ ! "$result_fps" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+            echo -e "${RED}[TUNE]${NC} Failed to get valid result, stopping"
+            break
+        fi
+        
+        echo -e "${YELLOW}[TUNE]${NC} Result: ${result_fps} fps/stream (threshold: ${TUNE_THRESHOLD})"
+        
+        # Check if passed threshold
+        local passed=$(LC_ALL=C awk -v fps="$result_fps" -v threshold="$TUNE_THRESHOLD" \
+            'BEGIN { print (fps >= threshold) ? 1 : 0 }')
+        
+        if [[ $passed -eq 1 ]]; then
+            echo -e "${GREEN}[TUNE]${NC} ✓ Passed threshold"
+            max_streams=$current_streams
+            max_streams_fps=$result_fps
+            current_streams=$((current_streams + step_size))
+        else
+            echo -e "${RED}[TUNE]${NC} ✗ Failed threshold"
+            
+            if [[ $step_size -gt 2 ]]; then
+                step_size=2
+                current_streams=$((max_streams + step_size))
+                echo -e "${YELLOW}[TUNE]${NC} Reducing step size to ${step_size}"
+            else
+                break
+            fi
+        fi
+        
+        # Safety limit
+        if [[ $current_streams -gt 200 ]]; then
+            echo -e "${YELLOW}[TUNE]${NC} Reached safety limit of 200 streams"
+            break
+        fi
+        
+        echo ""
+    done
+    
+    echo ""
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}Auto-Tune Results${NC}"
+    echo -e "${GREEN}========================================${NC}"
+    echo "Maximum Streams: ${max_streams}"
+    echo "FPS per Stream: ${max_streams_fps}"
+    echo "Total Throughput: $(LC_ALL=C awk -v s="$max_streams" -v f="$max_streams_fps" 'BEGIN { printf("%.2f", s * f) }') fps"
+    echo "FPS Threshold: ${TUNE_THRESHOLD}"
+    echo ""
+    echo "To verify with full duration test:"
+    echo "  $0 -v \"$VIDEO_FILE\" -n ${max_streams} -P $(( (max_streams + 7) / 8 )) -d \"$DEVICE\" -b ${BATCH_SIZE} -i 120 $([ "$ENABLE_AI" = true ] && echo "-a -m \"$MODEL_PATH\"")"
+    echo ""
+    
+    exit 0
+}
+
+# Check if auto-tune mode is enabled
+if [[ "${AUTO_TUNE}" == true ]]; then
+    run_auto_tune
+fi
 
 # Results directory
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -166,7 +270,7 @@ docker run -d \
     --device="${CARD_DEV}" \
     --device="${RENDER_DEV}" \
     --net=host \
-    -v "${MOUNT_DIR}":/home/dlstreamer \
+    -v "${MOUNT_DIR}":/home/dlstreamer/work \
     -e PYTHONPATH="/opt/intel/dlstreamer/python" \
     -u root \
     "${IMAGE}" tail -f /dev/null >/dev/null
@@ -362,8 +466,10 @@ if [[ -f "${LOG_FILE}" ]]; then
             echo "${PIPELINE}"
             echo ""
         } > "${SUMMARY_FILE}"
+        echo -e "${GREEN}[SUCCESS]${NC} Results saved to: ${RESULTS_DIR}"
         
-        echo ""
+        # Return throughput per stream for auto-tune mode
+        echo "${THROUGHPUT_PER_STREAM}"echo ""
         echo -e "${GREEN}[SUCCESS]${NC} Results saved to: ${RESULTS_DIR}"
         
     else

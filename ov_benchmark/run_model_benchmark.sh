@@ -186,6 +186,10 @@ test_model() {
         echo ""
     } > "${log_file}"
     
+    # Extract device ID from DEVICE (e.g., GPU.0 -> 0)
+    local device_id="${DEVICE##*.}"
+    local gpu_monitor_script="$(cd "$(dirname "$0")/../utils" && pwd)/gpu_monitor.sh"
+    
     # Test each batch size
     local batch_count=0
     local total_batches=$(echo ${BATCH_SIZES} | wc -w)
@@ -200,16 +204,38 @@ test_model() {
             echo "=========================================="
         } >> "${log_file}"
         
+        # Start GPU monitoring for this batch size
+        local gpu_csv="${RESULTS_DIR}/${model_name}_bs${bs}_gpu.csv"
+        local gpu_monitor_pid=""
+        if [[ -f "${gpu_monitor_script}" ]]; then
+            bash "${gpu_monitor_script}" "${gpu_csv}" "${device_id}" 1 "${model_name}" "${bs}" &
+            gpu_monitor_pid=$!
+            sleep 2
+        fi
+        
         # Run benchmark_app in container
         docker exec "${CONTAINER_NAME}" bash -c \
             "benchmark_app -m ${model_path} --batch_size ${bs} -d ${DEVICE} -hint throughput -shape [${bs},3,640,640]" \
             >> "${log_file}" 2>&1
+        
+        # Stop GPU monitoring
+        if [[ -n "${gpu_monitor_pid}" ]]; then
+            kill "${gpu_monitor_pid}" 2>/dev/null || true
+            sleep 1
+            kill -9 "${gpu_monitor_pid}" 2>/dev/null || true
+        fi
         
         echo "" >> "${log_file}"
         sleep 5
     done
     
     echo -e "${GREEN}[DONE]${NC} Model ${model_name} testing completed"
+    
+    # List GPU metric files
+    local gpu_files=$(ls "${RESULTS_DIR}/${model_name}"_bs*_gpu.csv 2>/dev/null | wc -l)
+    if [[ ${gpu_files} -gt 0 ]]; then
+        echo "  GPU metrics: ${gpu_files} files saved"
+    fi
     echo ""
     
     # Parse results and generate summary
