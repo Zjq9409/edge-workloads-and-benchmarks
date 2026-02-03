@@ -108,8 +108,14 @@ fi
 METRICS="0,1,2,3,4,18,22,24,25,26,27,36"
 
 # Initialize CSV with header if it doesn't exist
+# Detect GPU type by checking xpu-smi header output
 if [[ ! -f "$OUTPUT_FILE" ]]; then
-    echo "Model Name,Batch Size,Timestamp,DeviceId,GPU Utilization (%),GPU Power (W),GPU Frequency (MHz),GPU Core Temp (°C),GPU Mem Temp (°C),GPU Memory Used (MiB),Compute Engine Util (%),Decoder Engine 0 (%),Decoder Engine 1 (%),Encoder Engine 0 (%),Encoder Engine 1 (%),Copy Engine 0 (%),Media Enhancement Engine 0 (%),Media Enhancement Engine 1 (%),Media Engine Frequency (MHz)" > "$OUTPUT_FILE"
+    # Get the actual header from xpu-smi
+    XPU_HEADER=$(sudo xpu-smi dump -d "$DEVICE_ID" -m "$METRICS" -n 1 2>/dev/null | grep "Timestamp" | head -n 1)
+    
+    # Add Model Name and Batch Size columns to the beginning
+    echo "Model Name,Batch Size,${XPU_HEADER}" > "$OUTPUT_FILE"
+    echo "[GPU Monitor] Initialized CSV with header from xpu-smi"
 fi
 
 # Start qmassa if enabled (runs in background continuously)

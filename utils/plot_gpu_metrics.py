@@ -75,102 +75,159 @@ def plot_gpu_metrics(csv_file, output_dir=None):
     model_name = df['Model Name'].iloc[0] if 'Model Name' in df.columns else 'Unknown'
     batch_size = df['Batch Size'].iloc[0] if 'Batch Size' in df.columns else 'N/A'
     
-    # Define metrics to plot
-    metrics = {
-        'Compute Engine Util (%)': {'ylabel': 'Utilization (%)', 'ylim': [0, 100]},
-        'GPU Power (W)': {'ylabel': 'Power (W)', 'ylim': None},
-        'GPU Frequency (MHz)': {'ylabel': 'Frequency (MHz)', 'ylim': None},
-        'GPU Core Temp (°C)': {'ylabel': 'Temperature (°C)', 'ylim': None},
-        'Decoder Engine 0 (%)': {'ylabel': 'Utilization (%)', 'ylim': [0, 100]},
-        'Decoder Engine 1 (%)': {'ylabel': 'Utilization (%)', 'ylim': [0, 100]},
-        'GPU Memory Used (MiB)': {'ylabel': 'Memory (MiB)', 'ylim': None},
-        'Media Engine Frequency (MHz)': {'ylabel': 'Frequency (MHz)', 'ylim': None},
-    }
+    # Dynamically detect available metrics from CSV columns
+    available_columns = df.columns.tolist()
     
-    engine_metrics = {
-        'GPU Utilization (%)': {'ylabel': 'Utilization (%)', 'ylim': [0, 100]},
-        'Compute Engine Util (%)': {'ylabel': 'Utilization (%)', 'ylim': [0, 100]},
-        'Decoder Engine 0 (%)': {'ylabel': 'Utilization (%)', 'ylim': [0, 100]},
-        'Decoder Engine 1 (%)': {'ylabel': 'Utilization (%)', 'ylim': [0, 100]},
-        'Encoder Engine 0 (%)': {'ylabel': 'Utilization (%)', 'ylim': [0, 100]},
-        'Encoder Engine 1 (%)': {'ylabel': 'Utilization (%)', 'ylim': [0, 100]},
-        'Copy Engine 0 (%)': {'ylabel': 'Utilization (%)', 'ylim': [0, 100]},
-        'Media Enhancement Engine 0 (%)': {'ylabel': 'Utilization (%)', 'ylim': [0, 100]},
-        'Media Enhancement Engine 1 (%)': {'ylabel': 'Utilization (%)', 'ylim': [0, 100]},
-        'Media Engine Frequency (MHz)': {'ylabel': 'Frequency (MHz)', 'ylim': None},
-    }
+    # Define base metrics to plot (will filter based on availability)
+    base_metrics = [
+        'GPU Utilization (%)',
+        'GPU Power (W)',
+        'GPU Frequency (MHz)',
+        'GPU Core Temperature (Celsius Degree)',
+        'GPU Memory Temperature (Celsius Degree)',
+        'GPU Memory Used (MiB)',
+        'Media Engine Frequency (MHz)',
+    ]
     
-    # Plot 1: Main GPU Metrics (2x4 grid for 7 metrics)
-    fig1, axes1 = plt.subplots(2, 4, figsize=(20, 10))
-    fig1.suptitle(f'GPU Metrics Overview - {model_name} (Batch Size: {batch_size})', fontsize=16, fontweight='bold')
+    # Build metrics dict with available metrics
+    metrics = {}
+    for metric in base_metrics:
+        if metric in available_columns:
+            if 'Utilization' in metric or 'Engine' in metric:
+                metrics[metric] = {'ylabel': 'Utilization (%)', 'ylim': [0, 100]}
+            elif 'Power' in metric:
+                metrics[metric] = {'ylabel': 'Power (W)', 'ylim': None}
+            elif 'Frequency' in metric:
+                metrics[metric] = {'ylabel': 'Frequency (MHz)', 'ylim': None}
+            elif 'Temperature' in metric or 'Temp' in metric:
+                metrics[metric] = {'ylabel': 'Temperature (°C)', 'ylim': None}
+            elif 'Memory' in metric:
+                metrics[metric] = {'ylabel': 'Memory (MiB)', 'ylim': None}
+            else:
+                metrics[metric] = {'ylabel': '', 'ylim': None}
     
-    axes1_flat = axes1.flatten()
-    for idx, (metric, config) in enumerate(metrics.items()):
-        ax = axes1_flat[idx]
-        if metric in df.columns:
-            # Convert to numeric, replacing any non-numeric values with NaN
-            data = pd.to_numeric(df[metric], errors='coerce')
-            ax.plot(x_axis_data, data, linewidth=1.5, color='#2E86AB', marker='o', markersize=3)
-            ax.set_xlabel(x_label)
-            ax.set_ylabel(config['ylabel'])
-            ax.set_title(metric, fontweight='bold')
-            ax.grid(True, alpha=0.3)
-            
-            if config['ylim']:
-                ax.set_ylim(config['ylim'])
-            
-            # Add statistics
-            mean_val = data.mean()
-            max_val = data.max()
-            min_val = data.min()
-            
-            stats_text = f'Avg: {mean_val:.2f}\nMax: {max_val:.2f}\nMin: {min_val:.2f}'
-            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
-                   verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
-                   fontsize=8)
+    # Dynamically build engine metrics from available columns
+    engine_metrics = {}
+    
+    # Pattern to match engine columns
+    engine_patterns = [
+        'Compute Engine',
+        'Decoder Engine',
+        'Encoder Engine',
+        'Copy Engine',
+        'Media Enhancement Engine',
+        'Media Engine Frequency'
+    ]
+    
+    for col in available_columns:
+        if any(pattern in col for pattern in engine_patterns):
+            if 'Frequency' in col:
+                engine_metrics[col] = {'ylabel': 'Frequency (MHz)', 'ylim': None}
+            else:
+                engine_metrics[col] = {'ylabel': 'Utilization (%)', 'ylim': [0, 100]}
+    
+    # Plot 1: Main GPU Metrics (dynamic grid based on number of metrics)
+    num_main_metrics = len(metrics)
+    if num_main_metrics > 0:
+        ncols = 4
+        nrows = (num_main_metrics + ncols - 1) // ncols  # Ceiling division
+        fig1, axes1 = plt.subplots(nrows, ncols, figsize=(20, 5*nrows))
+        fig1.suptitle(f'GPU Metrics Overview - {model_name} (Batch Size: {batch_size})', fontsize=16, fontweight='bold')
+        
+        if nrows == 1 and ncols == 1:
+            axes1_flat = [axes1]
+        elif nrows == 1 or ncols == 1:
+            axes1_flat = axes1.flatten()
         else:
-            ax.text(0.5, 0.5, f'{metric}\nNot Available', ha='center', va='center')
-            ax.set_title(metric, fontweight='bold')
+            axes1_flat = axes1.flatten()
+        
+        for idx, (metric, config) in enumerate(metrics.items()):
+            ax = axes1_flat[idx]
+            if metric in df.columns:
+                # Convert to numeric, replacing any non-numeric values with NaN
+                data = pd.to_numeric(df[metric], errors='coerce')
+                ax.plot(x_axis_data, data, linewidth=1.5, color='#2E86AB', marker='o', markersize=3)
+                ax.set_xlabel(x_label)
+                ax.set_ylabel(config['ylabel'])
+                ax.set_title(metric, fontweight='bold')
+                ax.grid(True, alpha=0.3)
+                
+                if config['ylim']:
+                    ax.set_ylim(config['ylim'])
+                
+                # Add statistics
+                mean_val = data.mean()
+                max_val = data.max()
+                min_val = data.min()
+                
+                stats_text = f'Avg: {mean_val:.2f}\nMax: {max_val:.2f}\nMin: {min_val:.2f}'
+                ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
+                       verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
+                       fontsize=8)
+        
+        # Hide unused subplots
+        for idx in range(num_main_metrics, len(axes1_flat)):
+            axes1_flat[idx].axis('off')
+        
+        plt.tight_layout()
+        output_file1 = os.path.join(output_dir, 'gpu_metrics_main.png')
+        plt.savefig(output_file1, dpi=150, bbox_inches='tight')
+        plt.close(fig1)
+        print(f"Saved main metrics plot to {output_file1}")
+    else:
+        print("No main metrics available to plot")
     
-    plt.tight_layout()
-    output_file1 = os.path.join(output_dir, 'gpu_metrics_main.png')
-    plt.savefig(output_file1, dpi=150, bbox_inches='tight')
-    print(f"Saved main metrics plot to {output_file1}")
-    
-    # Plot 2: Engine Utilization (5x2 grid for 9 metrics)
-    fig2, axes2 = plt.subplots(5, 2, figsize=(16, 20))
-    fig2.suptitle(f'GPU Engine Utilization - {model_name} (Batch Size: {batch_size})', fontsize=16, fontweight='bold')
-    
-    axes2_flat = axes2.flatten()
-    for idx, (metric, config) in enumerate(engine_metrics.items()):
-        ax = axes2_flat[idx]
-        if metric in df.columns:
-            data = pd.to_numeric(df[metric], errors='coerce')
-            ax.plot(x_axis_data, data, linewidth=1.5, color='#A23B72', marker='o', markersize=3)
-            ax.set_xlabel(x_label)
-            ax.set_ylabel(config['ylabel'])
-            ax.set_title(metric, fontweight='bold')
-            ax.grid(True, alpha=0.3)
-            
-            if config['ylim']:
-                ax.set_ylim(config['ylim'])
-            
-            # Add statistics
-            mean_val = data.mean()
-            max_val = data.max()
-            
-            stats_text = f'Avg: {mean_val:.2f}%\nMax: {max_val:.2f}%'
-            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
-                   verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5),
-                   fontsize=8)
+    # Plot 2: Engine Utilization (dynamic grid based on number of engines)
+    num_engine_metrics = len(engine_metrics)
+    if num_engine_metrics > 0:
+        ncols = 2
+        nrows = (num_engine_metrics + ncols - 1) // ncols  # Ceiling division
+        fig2, axes2 = plt.subplots(nrows, ncols, figsize=(16, 4*nrows))
+        fig2.suptitle(f'GPU Engine Utilization - {model_name} (Batch Size: {batch_size})', fontsize=16, fontweight='bold')
+        
+        if nrows == 1 and ncols == 1:
+            axes2_flat = [axes2]
+        elif nrows == 1 or ncols == 1:
+            axes2_flat = axes2.flatten()
         else:
-            ax.text(0.5, 0.5, f'{metric}\nNot Available', ha='center', va='center')
-            ax.set_title(metric, fontweight='bold')
-    
-    plt.tight_layout()
-    output_file2 = os.path.join(output_dir, 'gpu_metrics_engines.png')
-    plt.savefig(output_file2, dpi=150, bbox_inches='tight')
-    print(f"Saved engine metrics plot to {output_file2}")
+            axes2_flat = axes2.flatten()
+        
+        for idx, (metric, config) in enumerate(engine_metrics.items()):
+            ax = axes2_flat[idx]
+            if metric in df.columns:
+                data = pd.to_numeric(df[metric], errors='coerce')
+                ax.plot(x_axis_data, data, linewidth=1.5, color='#A23B72', marker='o', markersize=3)
+                ax.set_xlabel(x_label)
+                ax.set_ylabel(config['ylabel'])
+                ax.set_title(metric, fontweight='bold')
+                ax.grid(True, alpha=0.3)
+                
+                if config['ylim']:
+                    ax.set_ylim(config['ylim'])
+                
+                # Add statistics
+                mean_val = data.mean()
+                max_val = data.max()
+                
+                if 'Frequency' in metric:
+                    stats_text = f'Avg: {mean_val:.0f}\nMax: {max_val:.0f}'
+                else:
+                    stats_text = f'Avg: {mean_val:.2f}%\nMax: {max_val:.2f}%'
+                ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
+                       verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5),
+                       fontsize=8)
+        
+        # Hide unused subplots
+        for idx in range(num_engine_metrics, len(axes2_flat)):
+            axes2_flat[idx].axis('off')
+        
+        plt.tight_layout()
+        output_file2 = os.path.join(output_dir, 'gpu_metrics_engines.png')
+        plt.savefig(output_file2, dpi=150, bbox_inches='tight')
+        plt.close(fig2)
+        print(f"Saved engine metrics plot to {output_file2}")
+    else:
+        print("No engine metrics available to plot")
     
     # Print summary statistics
     print("\n" + "="*60)
@@ -181,11 +238,37 @@ def plot_gpu_metrics(csv_file, output_dir=None):
     print(f"Total Samples: {len(df)}")
     print("-"*60)
     
-    for metric in ['GPU Utilization (%)', 'GPU Power (W)', 'GPU Core Temp (°C)', 
-                   'GPU Memory Used (MiB)', 'Compute Engine Util (%)', 'Decoder Engine 0 (%)', 'Decoder Engine 1 (%)']:
+    # Print statistics for key metrics (those that exist)
+    key_metrics = [
+        'GPU Utilization (%)',
+        'GPU Power (W)',
+        'GPU Core Temperature (Celsius Degree)',
+        'GPU Memory Temperature (Celsius Degree)',
+        'GPU Memory Used (MiB)'
+    ]
+    
+    for metric in key_metrics:
         if metric in df.columns:
             data = pd.to_numeric(df[metric], errors='coerce')
-            print(f"{metric:35s}: Avg={data.mean():7.2f}, Max={data.max():7.2f}, Min={data.min():7.2f}")
+            print(f"{metric:45s}: Avg={data.mean():7.2f}, Max={data.max():7.2f}, Min={data.min():7.2f}")
+    
+    # Print all compute engines
+    for col in sorted(available_columns):
+        if 'Compute Engine' in col and col not in key_metrics:
+            data = pd.to_numeric(df[col], errors='coerce')
+            print(f"{col:45s}: Avg={data.mean():7.2f}, Max={data.max():7.2f}, Min={data.min():7.2f}")
+    
+    # Print decoder engines
+    for col in sorted(available_columns):
+        if 'Decoder Engine' in col:
+            data = pd.to_numeric(df[col], errors='coerce')
+            print(f"{col:45s}: Avg={data.mean():7.2f}, Max={data.max():7.2f}, Min={data.min():7.2f}")
+    
+    # Print encoder engines
+    for col in sorted(available_columns):
+        if 'Encoder Engine' in col:
+            data = pd.to_numeric(df[col], errors='coerce')
+            print(f"{col:45s}: Avg={data.mean():7.2f}, Max={data.max():7.2f}, Min={data.min():7.2f}")
     
     print("="*60)
     print(f"\nPlots saved to: {output_dir}")
