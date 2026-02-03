@@ -87,17 +87,6 @@ Automatically find maximum stream count:
 3. Fine-tunes with step size 2 when approaching limit
 4. Reports maximum sustainable stream count
 
-### Multi-GPU
-
-Test on different GPUs:
-
-```bash
-# GPU.0
-./run_pipeline_benchmark.sh -n 32 -P 4 -d GPU.0 -b 32 -a -i 120
-
-# GPU.1
-./run_pipeline_benchmark.sh -n 32 -P 4 -d GPU.1 -b 32 -a -i 120
-```
 
 ## Output
 

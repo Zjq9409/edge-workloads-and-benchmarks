@@ -17,7 +17,22 @@ set -e
 #   ./run_model_benchmark.sh -m /home/intel/models/yolo11n_openvino_model/yolo11n.xml -d GPU.0 -b "1 4 8 16 32"
 
 # Configuration
-IMAGE="intel/dlstreamer:2025.2.0-ubuntu24"
+# Auto-detect Ubuntu version and select appropriate Docker image
+if [[ -f /etc/os-release ]]; then
+    . /etc/os-release
+    if [[ "${VERSION_ID}" == "22.04" ]]; then
+        IMAGE="intel/dlstreamer:2025.2.0-ubuntu22"
+    elif [[ "${VERSION_ID}" == "24.04" ]]; then
+        IMAGE="intel/dlstreamer:2025.2.0-ubuntu24"
+    else
+        echo -e "\033[0;31m[ERROR]\033[0m Unsupported Ubuntu version: ${VERSION_ID}"
+        echo "Supported versions: 22.04, 24.04"
+        exit 1
+    fi
+else
+    echo -e "\033[0;31m[ERROR]\033[0m Cannot detect OS version (/etc/os-release not found)"
+    exit 1
+fi
 MOUNT_DIR="/home/intel"
 CONTAINER_NAME="model_benchmark_$$"
 DEVICE="GPU.0"

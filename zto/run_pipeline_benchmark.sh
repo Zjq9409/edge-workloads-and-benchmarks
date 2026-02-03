@@ -19,7 +19,22 @@ set -e
 #./run_pipeline_benchmark.sh -n 40 -d GPU.0 -b 32 -T
 
 # Configuration
-IMAGE="intel/dlstreamer:2025.2.0-ubuntu24"
+# Auto-detect Ubuntu version and select appropriate Docker image
+if [[ -f /etc/os-release ]]; then
+    . /etc/os-release
+    if [[ "${VERSION_ID}" == "22.04" ]]; then
+        IMAGE="intel/dlstreamer:2025.2.0-ubuntu22"
+    elif [[ "${VERSION_ID}" == "24.04" ]]; then
+        IMAGE="intel/dlstreamer:2025.2.0-ubuntu24"
+    else
+        echo -e "\033[0;31m[ERROR]\033[0m Unsupported Ubuntu version: ${VERSION_ID}"
+        echo "Supported versions: 22.04, 24.04"
+        exit 1
+    fi
+else
+    echo -e "\033[0;31m[ERROR]\033[0m Cannot detect OS version (/etc/os-release not found)"
+    exit 1
+fi
 MOUNT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CONTAINER_NAME="benchmark_$$"
 DURATION=120
