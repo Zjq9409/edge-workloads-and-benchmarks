@@ -84,8 +84,9 @@ def plot_gpu_metrics(csv_file, output_dir=None):
         'GPU Power (W)',
         'GPU Frequency (MHz)',
         'GPU Core Temperature (Celsius Degree)',
-        'GPU Memory Temperature (Celsius Degree)',
         'GPU Memory Used (MiB)',
+        'Decoder Engine 0 (%)',
+        'Decoder Engine 1 (%)',
         'Media Engine Frequency (MHz)',
     ]
     
@@ -93,16 +94,17 @@ def plot_gpu_metrics(csv_file, output_dir=None):
     metrics = {}
     for metric in base_metrics:
         if metric in available_columns:
-            if 'Utilization' in metric or 'Engine' in metric:
-                metrics[metric] = {'ylabel': 'Utilization (%)', 'ylim': [0, 100]}
+            # Check Frequency first before Engine (to avoid misclassifying "Media Engine Frequency")
+            if 'Frequency' in metric:
+                metrics[metric] = {'ylabel': 'Frequency (MHz)', 'ylim': None}
             elif 'Power' in metric:
                 metrics[metric] = {'ylabel': 'Power (W)', 'ylim': None}
-            elif 'Frequency' in metric:
-                metrics[metric] = {'ylabel': 'Frequency (MHz)', 'ylim': None}
             elif 'Temperature' in metric or 'Temp' in metric:
                 metrics[metric] = {'ylabel': 'Temperature (°C)', 'ylim': None}
             elif 'Memory' in metric:
                 metrics[metric] = {'ylabel': 'Memory (MiB)', 'ylim': None}
+            elif 'Utilization' in metric or 'Engine' in metric:
+                metrics[metric] = {'ylabel': 'Utilization (%)', 'ylim': [0, 100]}
             else:
                 metrics[metric] = {'ylabel': '', 'ylim': None}
     
