@@ -5,17 +5,18 @@
 
 set -e
 
-# 8个流，分成2个进程（每个进程4个流）
-#./run_pipeline_benchmark.sh -v /home/dlstreamer/work/media-downloader/1280x720_25fps_medium.h265 -n 8 -P 2 -d GPU.0 -i 120
-
-# 完整AI推理，48个流，6个进程（每个进程4个流）
-#./run_pipeline_benchmark.sh -v /home/dlstreamer/work/media-downloader/1280x720_25fps_medium.h265 -m /home/dlstreamer/work/model-conversion/models/yolo11n/yolo11n.xml -n 48 -P 6 -d GPU.0 -b 32  -a  -p /home/dlstreamer/add_data.py -q localhost:1883 -i 120
-
 # 默认单进程（与原来一样）
-#./run_pipeline_benchmark.sh -v /home/dlstreamer/work/media-downloader/1280x720_25fps_medium.h265 -n 8 -d GPU.0 -i 120
+#./run_pipeline_benchmark.sh -n 8 -d GPU.0 -i 120
 
-#./run_pipeline_benchmark.sh -v /home/dlstreamer/work/media-downloader/1280x720_25fps_medium.h265 -m /home/dlstreamer/work/model-conversion/models/yolo11n/yolo11n_int8.xml -n 80 -P 6 -d GPU.1 -b 32  -a  -p /home/dlstreamer/add_data.py -q localhost:1883 -i 120
-# ./run_pipeline_benchmark.sh -v /home/dlstreamer/work/media-downloader/1280x720_25fps_medium.h265 -m /home/dlstreamer/work/model-conversion/models/yolo11n/yolo11n.xml -n 48 -P 4 -d GPU.1 -b 64  -a  -p /home/dlstreamer/add_data.py -q localhost:1883 -i 120
+
+# 完整 Pipeline - FP32 模型（32路流）
+#./run_pipeline_benchmark.sh -n 32 -P 4 -d GPU.0 -b 32 -i 120
+
+# 完整 Pipeline - INT8 模型（48路流，更高性能）
+#./run_pipeline_benchmark.sh -n 48 -P 6 -d GPU.0 -b 32 -i 120 -int8
+
+# Auto-tune 找最大流数
+#./run_pipeline_benchmark.sh -n 40 -d GPU.0 -b 32 -T
 
 # Configuration
 IMAGE="intel/dlstreamer:2025.2.0-ubuntu24"
@@ -26,14 +27,17 @@ TARGET_FPS=25
 NUM_STREAMS=1
 NUM_PROCESSES=1
 DEVICE="GPU.0"
-VIDEO_FILE="/home/dlstreamer/work/media-downloader/media/hevc/apple_720p25_loop100.h265"
-MODEL_PATH="/home/dlstreamer/work/pipelines/light/detection/yolov11n_640x640/INT8/yolo11n.xml"
-ENABLE_AI=false
+VIDEO_FILE="/home/dlstreamer/work/media-downloader/media/hevc/apple_720p25_loop30.h265"
+MODEL_PATH_INT8="/home/dlstreamer/work/model-conversion/models/yolo11n/yolo11n_int8.xml"
+MODEL_PATH_FP32="/home/dlstreamer/work/model-conversion/models/yolo11n/yolo11n_fp32.xml"
+MODEL_PATH="${MODEL_PATH_FP32}"  # Default to FP32
+USE_INT8=false
+ENABLE_AI=true  # Default: run full AI pipeline
 MQTT_ADDRESS="localhost:1883"
-PYTHON_MODULE=""
+PYTHON_MODULE="/home/dlstreamer/add_data.py"  # Default: enable metadata processing and MQTT
 AUTO_TUNE=false
 TUNE_THRESHOLD=25.0
-TUNE_SHORT_DURATION=30
+TUNE_SHORT_DURATION=20
 
 # Color output
 GREEN='\033[0;32m'
@@ -41,41 +45,65 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+# Check and start MQTT broker if needed
+ensure_mqtt_broker() {
+    local mqtt_container="dlstreamer_mqtt"
+    
+    # Check if MQTT container is running
+    if docker ps --format '{{.Names}}' | grep -q "^${mqtt_container}$"; then
+        echo -e "${GREEN}[INFO]${NC} MQTT broker is already running"
+        return 0
+    fi
+    
+    # Check if container exists but is stopped
+    if docker ps -a --format '{{.Names}}' | grep -q "^${mqtt_container}$"; then
+        echo -e "${YELLOW}[INFO]${NC} Starting existing MQTT broker container..."
+        docker start "${mqtt_container}" >/dev/null 2>&1
+    else
+        echo -e "${YELLOW}[INFO]${NC} Starting MQTT broker container..."
+        docker run -d --rm \
+            --name "${mqtt_container}" \
+            -p 1883:1883 \
+            -p 9001:9001 \
+            eclipse-mosquitto:1.6 >/dev/null 2>&1
+    fi
+    
+    # Wait for MQTT to be ready
+    sleep 2
+    
+    if docker ps --format '{{.Names}}' | grep -q "^${mqtt_container}$"; then
+        echo -e "${GREEN}[INFO]${NC} MQTT broker started successfully"
+        return 0
+    else
+        echo -e "${RED}[WARNING]${NC} Failed to start MQTT broker"
+        return 1
+    fi
+}
+
 # Usage
 usage() {
     cat << EOF
+AI Pipeline Benchmark - Full inference pipeline with detection, tracking, and metadata
+
 Usage: $0 [OPTIONS]
 
-Options:
-  -v <video>         Video file path (default: media-downloader/1280x720_25fps_medium.h265)
-  -m <model>         Model XML path (default: /home/dlstreamer/FP16/yolo11n.xml)
-  -n <num_streams>   Number of streams (default: 1)
-  -P <num_processes> Number of gst-launch-1.0 processes (default: 1, streams distributed across processes)
-  -d <device>        Device (e.g., GPU.0, GPU.1) (default: GPU.0)
-  -g <gpu_card>      GPU card (e.g., card0, card1) (default: auto-detect)
+Common options:
+  -n <num_streams>   Number of AI streams (default: 1)
+  -P <num_processes> Number of processes (default: 1)
+  -d <device>        GPU device: GPU.0, GPU.1 (default: GPU.0)
+  -b <batch_size>    Inference batch size (default: 1)
   -i <duration>      Test duration in seconds (default: 120)
-  -t <target_fps>    Target FPS for density calculation (default: 25)
-  -b <batch_size>    Batch size (default: 1)
-  -a                 Enable AI inference pipeline (gvadetect + gvatrack + metadata)
-  -p <python>        Python module path for gvapython (e.g., /home/dlstreamer/add_data.py)
-  -q <mqtt>          MQTT broker address (default: localhost:1883)
-  -T                 Enable auto-tune mode to find maximum stream count
-  -s <threshold>     FPS threshold for auto-tune mode (default: 25.0)
+  -a                 Enable AI inference (required for AI pipeline)
+  -int8              Use INT8 model (default: FP32)
+  -T                 Enable auto-tune mode
   -h                 Show this help message
 
 Examples:
-  Decode only:
-    $0 -v video.h265 -n 4 -d GPU.0 -i 120
+  ./run_pipeline_benchmark.sh -n 32 -P 4 -d GPU.0 -b 32 -a -i 120
+  ./run_pipeline_benchmark.sh -n 48 -P 6 -d GPU.0 -b 32 -a -int8 -i 120
+  ./run_pipeline_benchmark.sh -n 40 -d GPU.0 -b 32 -a -T
 
-  Full AI pipeline with 8 streams in 2 processes (4 streams per process):
-    $0 -v video.h265 -m FP16/yolo11n.xml -n 8 -P 2 -d GPU.0 -b 32 -i 120 -a
-
-  With MQTT publishing:
-    $0 -v video.h265 -m FP16/yolo11n.xml -n 4 -a -p /home/dlstreamer/add_data.py -q localhost:1883
-
-  Auto-tune mode (find maximum streams):
-    $0 -v video.h265 -m FP16/yolo11n.xml -n 40 -d GPU.1 -b 32 -a -T
-    $0 -v video.h265 -n 50 -d GPU.0 -T
+For detailed documentation, see: README.md
 
 EOF
     exit 0
@@ -84,26 +112,90 @@ EOF
 # Parse arguments
 GPU_CARD=""
 BATCH_SIZE=1
-while getopts "v:m:n:P:d:g:i:t:b:p:q:s:Tah" opt; do
-    case $opt in
-        v) VIDEO_FILE="$OPTARG" ;;
-        m) MODEL_PATH="$OPTARG" ;;
-        n) NUM_STREAMS="$OPTARG" ;;
-        P) NUM_PROCESSES="$OPTARG" ;;
-        d) DEVICE="$OPTARG" ;;
-        g) GPU_CARD="$OPTARG" ;;
-        i) DURATION="$OPTARG" ;;
-        t) TARGET_FPS="$OPTARG" ;;
-        b) BATCH_SIZE="$OPTARG" ;;
-        a) ENABLE_AI=true ;;
-        p) PYTHON_MODULE="$OPTARG" ;;
-        q) MQTT_ADDRESS="$OPTARG" ;;
-        T) AUTO_TUNE=true ;;
-        s) TUNE_THRESHOLD="$OPTARG" ;;
-        h) usage ;;
-        *) usage ;;
+MODEL_OVERRIDE=""
+
+# Process all arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -int8)
+            USE_INT8=true
+            shift
+            ;;
+        -v)
+            VIDEO_FILE="$2"
+            shift 2
+            ;;
+        -m)
+            MODEL_OVERRIDE="$2"
+            shift 2
+            ;;
+        -n)
+            NUM_STREAMS="$2"
+            shift 2
+            ;;
+        -P)
+            NUM_PROCESSES="$2"
+            shift 2
+            ;;
+        -d)
+            DEVICE="$2"
+            shift 2
+            ;;
+        -g)
+            GPU_CARD="$2"
+            shift 2
+            ;;
+        -i)
+            DURATION="$2"
+            shift 2
+            ;;
+        -t)
+            TARGET_FPS="$2"
+            shift 2
+            ;;
+        -b)
+            BATCH_SIZE="$2"
+            shift 2
+            ;;
+        -p)
+            PYTHON_MODULE="$2"
+            shift 2
+            ;;
+        -q)
+            MQTT_ADDRESS="$2"
+            shift 2
+            ;;
+        -s)
+            TUNE_THRESHOLD="$2"
+            shift 2
+            ;;
+        -a)
+            ENABLE_AI=true
+            shift
+            ;;
+        -T)
+            AUTO_TUNE=true
+            shift
+            ;;
+        -h)
+            usage
+            ;;
+        *)
+            echo "Unknown option: $1"
+            usage
+            ;;
     esac
 done
+
+# Apply INT8 model selection if flag is set
+if [[ "${USE_INT8}" == true ]]; then
+    MODEL_PATH="${MODEL_PATH_INT8}"
+fi
+
+# Allow manual model override
+if [[ -n "${MODEL_OVERRIDE}" ]]; then
+    MODEL_PATH="${MODEL_OVERRIDE}"
+fi
 
 # Auto-tune mode function
 run_auto_tune() {
@@ -203,6 +295,16 @@ mkdir -p "${RESULTS_DIR}"
 
 LOG_FILE="${RESULTS_DIR}/benchmark.log"
 SUMMARY_FILE="${RESULTS_DIR}/summary.txt"
+MONITOR_CSV="${RESULTS_DIR}/gpu_monitor.csv"
+
+# GPU monitor script path
+GPU_MONITOR_SCRIPT="../utils/gpu_monitor.sh"
+
+# Ensure MQTT broker is running if AI is enabled
+if [[ "${ENABLE_AI}" == true ]]; then
+    ensure_mqtt_broker
+    echo ""
+fi
 
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Pipeline Benchmark${NC}"
@@ -217,10 +319,8 @@ echo "Video: ${VIDEO_FILE}"
 echo "AI Enabled: ${ENABLE_AI}"
 if [[ "${ENABLE_AI}" == true ]]; then
     echo "Model: ${MODEL_PATH}"
-    if [[ -n "${PYTHON_MODULE}" ]]; then
-        echo "Python Module: ${PYTHON_MODULE}"
-        echo "MQTT: ${MQTT_ADDRESS}"
-    fi
+    echo "Python Module: ${PYTHON_MODULE}"
+    echo "MQTT: ${MQTT_ADDRESS}"
 fi
 echo "Results: ${RESULTS_DIR}"
 echo ""
@@ -252,6 +352,13 @@ echo ""
 
 # Cleanup function
 cleanup() {
+    # Stop GPU monitoring if running
+    if [[ -n "${MONITOR_PID}" ]] && kill -0 "${MONITOR_PID}" 2>/dev/null; then
+        echo -e "${YELLOW}[INFO]${NC} Stopping GPU monitor..."
+        kill "${MONITOR_PID}" 2>/dev/null || true
+        wait "${MONITOR_PID}" 2>/dev/null || true
+    fi
+    
     if docker ps -q -f name="${CONTAINER_NAME}" 2>/dev/null; then
         echo -e "${YELLOW}[INFO]${NC} Stopping container..."
         docker stop -t 2 "${CONTAINER_NAME}" >/dev/null 2>&1 || true
@@ -276,18 +383,119 @@ docker run -d \
     "${IMAGE}" tail -f /dev/null >/dev/null
 
 echo -e "${YELLOW}[INFO]${NC} Container created successfully"
+
+# Copy add_data.py if it exists and AI is enabled
+if [[ "${ENABLE_AI}" == true ]]; then
+    # Check if Python module is already accessible via mounted volume
+    if [[ "${PYTHON_MODULE}" == /home/dlstreamer/work/* ]]; then
+        echo -e "${GREEN}[INFO]${NC} Python module accessible via mounted volume: ${PYTHON_MODULE}"
+    else
+        # Need to copy the file to container
+        SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+        LOCAL_PYTHON_FILE="${SCRIPT_DIR}/add_data.py"
+        
+        if [[ -f "${LOCAL_PYTHON_FILE}" ]]; then
+            echo -e "${YELLOW}[INFO]${NC} Copying Python module to container..."
+            docker cp "${LOCAL_PYTHON_FILE}" "${CONTAINER_NAME}:${PYTHON_MODULE}" >/dev/null 2>&1
+            
+            if [[ $? -eq 0 ]]; then
+                echo -e "${GREEN}[INFO]${NC} Python module copied to ${PYTHON_MODULE}"
+            else
+                echo -e "${RED}[ERROR]${NC} Failed to copy Python module"
+                echo -e "${RED}[ERROR]${NC} Python module is required for AI pipeline"
+                exit 1
+            fi
+        else
+            echo -e "${RED}[ERROR]${NC} add_data.py not found at ${LOCAL_PYTHON_FILE}"
+            echo -e "${RED}[ERROR]${NC} Python module is required for AI pipeline"
+            exit 1
+        fi
+    fi
+fi
+
+echo ""
+
+# Request sudo access upfront for GPU monitoring
+echo -e "${YELLOW}[INFO]${NC} GPU monitoring requires sudo access. Please enter your password:"
+sudo -v || {
+    echo -e "${RED}[ERROR]${NC} Failed to obtain sudo access"
+    exit 1
+}
+
+# Start GPU monitoring
+MONITOR_PID=""
+if [[ -f "${GPU_MONITOR_SCRIPT}" ]]; then
+    # Extract device number from DEVICE (e.g., GPU.0 -> 0)
+    DEVICE_NUM="${DEVICE##*.}"
+    
+    # Determine model info for monitoring
+    if [[ "${ENABLE_AI}" == true ]]; then
+        if [[ "${USE_INT8}" == true ]]; then
+            MODEL_INFO="yolo11n_int8"
+        else
+            MODEL_INFO="yolo11n_fp32"
+        fi
+    else
+        MODEL_INFO="decode_only"
+    fi
+    
+    echo -e "${YELLOW}[INFO]${NC} Starting GPU monitor for device ${DEVICE_NUM}..."
+    echo -e "${YELLOW}[INFO]${NC} Please enter sudo password if prompted..."
+    bash "${GPU_MONITOR_SCRIPT}" "${MONITOR_CSV}" "${DEVICE_NUM}" 1 "${MODEL_INFO}" "${BATCH_SIZE}" "${RESULTS_DIR}" &
+    MONITOR_PID=$!
+    
+    # Wait for monitor to start and collect first data point
+    echo -e "${YELLOW}[INFO]${NC} Waiting for GPU monitor to initialize..."
+    WAIT_COUNT=0
+    MAX_WAIT=20
+    
+    while [[ ${WAIT_COUNT} -lt ${MAX_WAIT} ]]; do
+        # Check if process is still running
+        if ! kill -0 "${MONITOR_PID}" 2>/dev/null; then
+            echo -e "${RED}[WARNING]${NC} GPU monitor process terminated unexpectedly"
+            MONITOR_PID=""
+            break
+        fi
+        
+        # Check if CSV file has data (more than just header)
+        if [[ -f "${MONITOR_CSV}" ]]; then
+            LINE_COUNT=$(wc -l < "${MONITOR_CSV}" 2>/dev/null || echo "0")
+            if [[ ${LINE_COUNT} -gt 1 ]]; then
+                echo -e "${GREEN}[INFO]${NC} GPU monitor started successfully (PID: ${MONITOR_PID})"
+                echo -e "${GREEN}[INFO]${NC} Monitor output: ${MONITOR_CSV}"
+                echo -e "${GREEN}[INFO]${NC} First data point collected, proceeding with benchmark..."
+                break
+            fi
+        fi
+        
+        sleep 1
+        WAIT_COUNT=$((WAIT_COUNT + 1))
+        
+        # Show progress every 5 seconds
+        if [[ $((WAIT_COUNT % 5)) -eq 0 ]]; then
+            echo -e "${YELLOW}[INFO]${NC} Still waiting for GPU monitor... (${WAIT_COUNT}/${MAX_WAIT}s)"
+        fi
+    done
+    
+    # Final check
+    if [[ ${WAIT_COUNT} -ge ${MAX_WAIT} ]]; then
+        echo -e "${RED}[WARNING]${NC} GPU monitor initialization timeout, continuing without monitoring"
+        if [[ -n "${MONITOR_PID}" ]] && kill -0 "${MONITOR_PID}" 2>/dev/null; then
+            kill "${MONITOR_PID}" 2>/dev/null || true
+        fi
+        MONITOR_PID=""
+    fi
+else
+    echo -e "${YELLOW}[WARNING]${NC} GPU monitor script not found: ${GPU_MONITOR_SCRIPT}"
+fi
+
 echo ""
 
 # Build GStreamer pipeline
 # Choose between decode-only or full AI pipeline
 if [[ "${ENABLE_AI}" == true ]]; then
-    # Full AI pipeline with detection, tracking, and metadata processing
-    AI_PIPELINE="gvadetect model=${MODEL_PATH} device=${DEVICE} pre-process-backend=vaapi-surface-sharing model-instance-id=inf0 batch-size=${BATCH_SIZE} ! gvatrack tracking-type=zero-term-imageless ! gvametaconvert add-empty-results=true json-indent=-1 timestamp-utc=true timestamp-microseconds=true"
-    
-    # Add optional Python processing and MQTT publishing
-    if [[ -n "${PYTHON_MODULE}" ]]; then
-        AI_PIPELINE="${AI_PIPELINE} ! gvapython module=${PYTHON_MODULE} ! queue ! gvametapublish method=mqtt address=${MQTT_ADDRESS} topic=dlstreamer async-handling=true"
-    fi
+    # Full AI pipeline with detection, tracking, metadata processing, and MQTT publishing
+    AI_PIPELINE="gvadetect model=${MODEL_PATH} device=${DEVICE} pre-process-backend=vaapi-surface-sharing model-instance-id=inf0 batch-size=${BATCH_SIZE} ! gvatrack tracking-type=zero-term-imageless ! gvametaconvert add-empty-results=true json-indent=-1 timestamp-utc=true timestamp-microseconds=true ! gvapython module=${PYTHON_MODULE} ! queue ! gvametapublish method=mqtt address=${MQTT_ADDRESS} topic=dlstreamer async-handling=true"
     
     PIPELINE="multifilesrc location=${VIDEO_FILE} loop=true ! h265parse ! vah265dec ! vapostproc ! \"video/x-raw(memory:VAMemory)\" ! ${AI_PIPELINE} ! gvafpscounter starting-frame=100 ! fakesink sync=false async=false"
 else
@@ -365,6 +573,13 @@ echo -e "${YELLOW}[INFO]${NC} Waiting for all processes to complete..."
 for pid in "${PROCESS_PIDS[@]}"; do
     wait "${pid}" 2>/dev/null || true
 done
+
+# Stop GPU monitoring (will auto-generate plots on exit)
+if [[ -n "${MONITOR_PID}" ]] && kill -0 "${MONITOR_PID}" 2>/dev/null; then
+    echo -e "${YELLOW}[INFO]${NC} Stopping GPU monitor..."
+    kill "${MONITOR_PID}" 2>/dev/null || true
+    wait "${MONITOR_PID}" 2>/dev/null || true
+fi
 
 # Merge all process logs
 echo "" >> "${LOG_FILE}"
@@ -462,15 +677,80 @@ if [[ -f "${LOG_FILE}" ]]; then
             echo "Throughput per Stream: ${THROUGHPUT_PER_STREAM} fps/stream"
             echo "Theoretical Stream Density: ${THEORETICAL_STREAMS}"
             echo ""
+            echo "GPU Monitoring:"
+            echo "--------------------------------------"
+            if [[ -f "${MONITOR_CSV}" ]]; then
+                echo "Monitor Data (CSV): ${MONITOR_CSV}"
+                if [[ -f "${RESULTS_DIR}/gpu_metrics_raw.json" ]]; then
+                    echo "Monitor Data (JSON): ${RESULTS_DIR}/gpu_metrics_raw.json"
+                fi
+                # Calculate average GPU metrics
+                AVG_GPU_UTIL=$(awk -F',' 'NR>1 && $4 ~ /^[0-9]+(\.[0-9]+)?$/ {sum+=$4; count++} END {if(count>0) printf("%.2f", sum/count); else print "N/A"}' "${MONITOR_CSV}")
+                AVG_GPU_POWER=$(awk -F',' 'NR>1 && $5 ~ /^[0-9]+(\.[0-9]+)?$/ {sum+=$5; count++} END {if(count>0) printf("%.2f", sum/count); else print "N/A"}' "${MONITOR_CSV}")
+                AVG_GPU_FREQ=$(awk -F',' 'NR>1 && $6 ~ /^[0-9]+(\.[0-9]+)?$/ {sum+=$6; count++} END {if(count>0) printf("%.0f", sum/count); else print "N/A"}' "${MONITOR_CSV}")
+                AVG_MEM_USED=$(awk -F',' 'NR>1 && $9 ~ /^[0-9]+(\.[0-9]+)?$/ {sum+=$9; count++} END {if(count>0) printf("%.0f", sum/count); else print "N/A"}' "${MONITOR_CSV}")
+                
+                echo "  Average GPU Utilization: ${AVG_GPU_UTIL}%"
+                echo "  Average GPU Power: ${AVG_GPU_POWER}W"
+                echo "  Average GPU Frequency: ${AVG_GPU_FREQ}MHz"
+                echo "  Average GPU Memory Used: ${AVG_MEM_USED}MiB"
+            else
+                echo "Monitor Data: Not available"
+            fi
+            echo ""
+            echo "System Information:"
+            echo "--------------------------------------"
+            # Collect system information
+            SYS_CPU=$(lscpu | grep "Model name" | grep -v "BIOS" | sed -n 's/^Model name://p' | xargs | sed 's/(R)/®/g; s/(TM)/™/g')
+            SYS_OS="Unknown"
+            SYS_KERNEL=$(uname -r)
+            if [[ -f /etc/os-release ]]; then
+                . /etc/os-release
+                SYS_OS="${NAME} ${VERSION_ID}"
+            fi
+            SYS_GPU_DRIVER=$(clinfo 2>/dev/null | grep -m1 "Driver Version" | awk '{print $3}' || echo "N/A")
+            SYS_VAAPI=$(vainfo 2>&1 | grep "libva info: VA-API version" | awk '{print $NF}' || echo "N/A")
+            SYS_DOCKER=$(docker --version 2>/dev/null | cut -d' ' -f3 | tr -d ',' || echo "N/A")
+            
+            echo "  CPU: ${SYS_CPU}"
+            echo "  OS: ${SYS_OS}"
+            echo "  Kernel: ${SYS_KERNEL}"
+            echo "  GPU Driver: ${SYS_GPU_DRIVER}"
+            echo "  VA-API Version: ${SYS_VAAPI}"
+            echo "  Docker Version: ${SYS_DOCKER}"
+            echo "  DLStreamer Image: ${IMAGE}"
+            echo ""
             echo "Pipeline:"
             echo "${PIPELINE}"
             echo ""
         } > "${SUMMARY_FILE}"
+        
+        # Append system information
+        SYSTEM_INFO_SCRIPT="$(cd "$(dirname "$0")/../html" && pwd)/generate_system_info.sh"
+        if [[ -f "${SYSTEM_INFO_SCRIPT}" ]]; then
+            TEMP_SYSINFO="${RESULTS_DIR}/.system_info.json"
+            bash "${SYSTEM_INFO_SCRIPT}" "${TEMP_SYSINFO}" >/dev/null 2>&1
+            
+            if [[ -f "${TEMP_SYSINFO}" ]]; then
+                {
+                    echo "System Information:"
+                    echo "--------------------------------------"
+                    if command -v python3 >/dev/null 2>&1; then
+                        python3 -c "import json; data=json.load(open('${TEMP_SYSINFO}')); print(f\"  CPU: {data['system']['name']}\\n  OS: {data['system']['os']}\\n  Kernel: {data['system']['kernel']}\\n  GPU Driver: {data['compute']['gpu_driver']}\\n  VA-API: {data['compute']['vaapi_version']}\\n  DLStreamer: {data['software']['dlstreamer_version']}\\n  OpenVINO: {data['software']['openvino_version']}\\n  Docker: {data['software']['docker_version']}\")" 2>/dev/null
+                    else
+                        cat "${TEMP_SYSINFO}"
+                    fi
+                    echo ""
+                } >> "${SUMMARY_FILE}"
+                rm -f "${TEMP_SYSINFO}"
+            fi
+        fi
+        
+        echo ""
         echo -e "${GREEN}[SUCCESS]${NC} Results saved to: ${RESULTS_DIR}"
         
         # Return throughput per stream for auto-tune mode
-        echo "${THROUGHPUT_PER_STREAM}"echo ""
-        echo -e "${GREEN}[SUCCESS]${NC} Results saved to: ${RESULTS_DIR}"
+        echo "${THROUGHPUT_PER_STREAM}"
         
     else
         echo -e "${RED}[ERROR]${NC} Could not parse throughput from log"

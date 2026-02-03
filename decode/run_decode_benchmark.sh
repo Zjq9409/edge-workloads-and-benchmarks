@@ -40,43 +40,24 @@ NC='\033[0m'
 # Usage
 usage() {
     cat << EOF
-Usage: $0 [OPTIONS]
-
 Decode-Only Benchmark - Tests pure video decode throughput without AI inference
 
-Options:
-  -v <video>         Video file path (required)
-                     Supported formats: .h264, .h265, .mp4
+Usage: $0 [OPTIONS]
+
+Common options:
+  -v <video>         Video file path (.h264, .h265, .mp4)
   -n <num_streams>   Number of decode streams (default: 1)
-  -P <num_processes> Number of gst-launch-1.0 processes (default: 1)
-                     Streams will be distributed across processes
-  -d <device>        GPU device: GPU.0, GPU.1, GPU.2, GPU.3 (default: GPU.0)
-  -g <gpu_card>      GPU card: card0, card1, etc. (default: auto-detect from device)
+  -P <num_processes> Number of processes (default: 1)
+  -d <device>        GPU device: GPU.0-GPU.3 (default: GPU.0)
   -i <duration>      Test duration in seconds (default: 120)
-  -t <target_fps>    Target FPS for density calculation (default: 25)
-  -T                 Enable auto-tune mode to find maximum stream count
-  -s <threshold>     FPS threshold for auto-tune mode (default: 25.0)
+  -T                 Enable auto-tune mode
   -h                 Show this help message
 
 Examples:
-  Basic decode test:
-    $0 -v video.h265 -n 200 -d GPU.0 -i 120
+  ./run_decode_benchmark.sh -n 200 -P 4 -d GPU.0 -i 120
+  ./run_decode_benchmark.sh -n 200 -d GPU.0 -T
 
-  Multi-process decode (8 streams in 2 processes):
-    $0 -v video.h265 -n 200 -P 2 -d GPU.0 -i 120
-
-  High density test on GPU.1:
-    $0 -v video.h265 -n 200 -P 5 -d GPU.1 -i 60
-
-  Auto-tune mode (find maximum decode streams):
-    $0 -n 80 -d GPU.0 -T
-    $0 -v video.h265 -n 200 -d GPU.1 -T -s 30
-
-Output:
-  Results are saved to: ./decode_results_<streams>streams_<processes>proc_<timestamp>/
-  - benchmark.log: Complete pipeline logs
-  - process_*.log: Individual process logs
-  - summary.txt: Performance summary
+For detailed documentation, see: README.md
 
 EOF
     exit 0
@@ -426,6 +407,13 @@ STREAMS_PER_PROCESS=$(( (NUM_STREAMS + NUM_PROCESSES - 1) / NUM_PROCESSES ))
 # Extract device ID from DEVICE (e.g., GPU.0 -> 0)
 DEVICE_ID="${DEVICE##*.}"
 
+# Request sudo access upfront for GPU monitoring
+echo -e "${YELLOW}[INFO]${NC} GPU monitoring requires sudo access. Please enter your password:"
+sudo -v || {
+    echo -e "${RED}[ERROR]${NC} Failed to obtain sudo access"
+    exit 1
+}
+
 # Start GPU monitoring
 GPU_MONITOR_CSV="${RESULTS_DIR}/gpu_metrics.csv"
 GPU_MONITOR_SCRIPT="$(cd "$(dirname "$0")/../utils" && pwd)/gpu_monitor.sh"
@@ -433,7 +421,7 @@ GPU_MONITOR_PID=""
 
 if [[ -f "${GPU_MONITOR_SCRIPT}" ]]; then
     echo -e "${YELLOW}[INFO]${NC} Starting GPU monitoring (device ${DEVICE_ID})..."
-    bash "${GPU_MONITOR_SCRIPT}" "${GPU_MONITOR_CSV}" "${DEVICE_ID}" 1 "decode" "${NUM_STREAMS}" &
+    bash "${GPU_MONITOR_SCRIPT}" "${GPU_MONITOR_CSV}" "${DEVICE_ID}" 1 "decode" "${NUM_STREAMS}" "${RESULTS_DIR}" &
     GPU_MONITOR_PID=$!
     echo "  GPU monitor PID: ${GPU_MONITOR_PID}"
     sleep 2
@@ -595,6 +583,36 @@ if [[ -f "${LOG_FILE}" ]]; then
             echo "${PIPELINE}"
             echo ""
         } > "${SUMMARY_FILE}"
+        
+        # Add system information to summary
+        TEMP_SYSTEM_INFO="${RESULTS_DIR}/temp_system_info.json"
+        if [[ -f "../html/generate_system_info.sh" ]]; then
+            bash ../html/generate_system_info.sh "$TEMP_SYSTEM_INFO" > /dev/null 2>&1
+            if [[ -f "$TEMP_SYSTEM_INFO" ]]; then
+                {
+                    echo ""
+                    echo "System Information:"
+                    echo "--------------------------------------"
+                    python3 -c "
+import json
+try:
+    with open('$TEMP_SYSTEM_INFO', 'r') as f:
+        data = json.load(f)
+    print(f\"  CPU: {data['system']['name']}\")
+    print(f\"  OS: {data['system']['os']}\")
+    print(f\"  Kernel: {data['system']['kernel']}\")
+    print(f\"  GPU Driver: {data['compute']['gpu_driver']}\")
+    print(f\"  VA-API: {data['compute']['vaapi_version']}\")
+    print(f\"  DLStreamer: {data['software']['dlstreamer_version']}\")
+    print(f\"  OpenVINO: {data['software']['openvino_version']}\")
+    print(f\"  Docker: {data['software']['docker_version']}\")
+except Exception as e:
+    print(f'Error parsing system info: {e}')
+" 2>/dev/null || cat "$TEMP_SYSTEM_INFO"
+                } >> "${SUMMARY_FILE}"
+                rm -f "$TEMP_SYSTEM_INFO"
+            fi
+        fi
         
         echo ""
         echo -e "${GREEN}[SUCCESS]${NC} Results saved to: ${RESULTS_DIR}"

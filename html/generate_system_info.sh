@@ -6,7 +6,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUTPUT_FILE="${SCRIPT_DIR}/system_info.json"
+# Allow custom output path via argument, default to script directory
+OUTPUT_FILE="${1:-${SCRIPT_DIR}/system_info.json}"
 
 echo "[ Info ] Collecting system information..."
 
@@ -46,16 +47,19 @@ fi
 # DLStreamer Version
 DLStreamer_Version="N/A"
 if command -v docker >/dev/null 2>&1; then
-    if docker images | grep -q "intel/dlstreamer"; then
-        DLStreamer_Version=$(docker run --rm --init intel/dlstreamer:latest apt list 2>/dev/null | grep -E "dlstreamer|gstreamer" | head -n1 | awk '{print $2}' || echo "latest")
+    # Find first available dlstreamer image
+    DLSTREAMER_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "intel/dlstreamer" | head -n1)
+    if [[ -n "$DLSTREAMER_IMAGE" ]]; then
+        DLStreamer_Version=$(docker run --rm --init "$DLSTREAMER_IMAGE" apt list 2>/dev/null | grep -E "dlstreamer|gstreamer" | head -n1 | awk '{print $2}' || echo "${DLSTREAMER_IMAGE#*:}")
     fi
 fi
 
 # OpenVINO Version
 OpenVINO_Version="N/A"
 if command -v docker >/dev/null 2>&1; then
-    if docker images | grep -q "intel/dlstreamer"; then
-        OpenVINO_Version=$(docker run --rm --init intel/dlstreamer:latest apt list 2>/dev/null | grep openvino | head -n1 | awk '{print $2}' || echo "N/A")
+    # Use the same dlstreamer image found above
+    if [[ -n "$DLSTREAMER_IMAGE" ]]; then
+        OpenVINO_Version=$(docker run --rm --init "$DLSTREAMER_IMAGE" apt list 2>/dev/null | grep openvino | head -n1 | awk '{print $2}' || echo "N/A")
     fi
 fi
 

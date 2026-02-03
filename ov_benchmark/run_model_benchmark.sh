@@ -25,11 +25,10 @@ BATCH_SIZES="1 4 8 16 32 64 128"
 MODEL_PATH=""
 TEST_ALL=false
 
-# Model paths (from convert_models.sh output in pipelines directory)
+# Model paths (from model-conversion/models directory)
 MODELS=(
-    "/home/intel/media_ai/edge-workloads-and-benchmarks/pipelines/light/detection/yolov11n_640x640/INT8/yolo11n.xml"
-    "/home/intel/media_ai/edge-workloads-and-benchmarks/pipelines/medium/detection/yolov5m_640x640/INT8/yolov5m-640_INT8.xml"
-    "/home/intel/media_ai/edge-workloads-and-benchmarks/pipelines/heavy/detection/yolov11m_640x640/INT8/yolo11m.xml"
+    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11n/yolo11n_fp32.xml"
+    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11n/yolo11n_int8.xml"
 )
 
 # Color output
@@ -42,25 +41,23 @@ NC='\033[0m'
 # Usage
 usage() {
     cat << EOF
+OpenVINO Model Benchmark - Test model inference performance with GPU monitoring
+
 Usage: $0 [OPTIONS]
 
-Options:
-  -m <model>         Model XML path (e.g., /home/intel/models/yolo11n.xml)
-  -d <device>        Device (e.g., GPU.0, GPU.1) (default: GPU.0)
-  -g <gpu_card>      GPU card (e.g., card0, card1) (default: auto-detect)
+Common options:
+  -m <model>         Model XML path (required unless -a)
+  -d <device>        GPU device: GPU.0, GPU.1 (default: GPU.0)
   -b <batch_sizes>   Space-separated batch sizes (default: "1 4 8 16 32 64 128")
-  -a                 Test all models in predefined list
+  -a                 Test all predefined models
   -h                 Show this help message
 
 Examples:
-  Test single model:
-    $0 -m /home/intel/models/yolo11n_openvino_model/yolo11n.xml -d GPU.0
+  ./run_model_benchmark.sh -m /home/intel/models/yolo11n.xml -d GPU.0
+  ./run_model_benchmark.sh -a -d GPU.0
+  ./run_model_benchmark.sh -m model.xml -b "1 8 32 128"
 
-  Test all models:
-    $0 -a -d GPU.0
-
-  Custom batch sizes:
-    $0 -m model.xml -b "1 8 32 128"
+For detailed documentation, see: README.md
 
 EOF
     exit 0
@@ -110,9 +107,6 @@ if [[ -z "${GPU_CARD}" ]]; then
     if [[ "${DEVICE}" == "GPU.0" ]]; then
         CARD_DEV="/dev/dri/card0"
         RENDER_DEV="/dev/dri/renderD128"
-    elif [[ "${DEVICE}" == "GPU.1" ]]; then
-        CARD_DEV="/dev/dri/card1"
-        RENDER_DEV="/dev/dri/renderD129"
     else
         CARD_DEV="/dev/dri/card0"
         RENDER_DEV="/dev/dri/renderD128"
@@ -141,6 +135,13 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
+# Request sudo access upfront for GPU monitoring
+echo -e "${YELLOW}[INFO]${NC} GPU monitoring requires sudo access. Please enter your password:"
+sudo -v || {
+    echo -e "${RED}[ERROR]${NC} Failed to obtain sudo access"
+    exit 1
+}
+
 # Start container
 echo -e "${YELLOW}[INFO]${NC} Creating container: ${CONTAINER_NAME}"
 docker run -d \
@@ -158,15 +159,10 @@ echo ""
 test_model() {
     local model_path=$1
     local model_name=$(basename "$model_path" .xml)
-    local model_dir=$(dirname "$model_path")
     
-    # Determine if it's INT8 model
-    if [[ "$model_dir" == *"int8"* ]]; then
-        model_name="${model_name}-int8"
-    fi
+    # Model name already contains fp32/int8 suffix, no need to add it again
     
     local log_file="${RESULTS_DIR}/${model_name}.log"
-    local summary_file="${RESULTS_DIR}/${model_name}_summary.txt"
     
     echo -e "${BLUE}========================================${NC}"
     echo -e "${BLUE}Testing Model: ${model_name}${NC}"
@@ -204,11 +200,15 @@ test_model() {
             echo "=========================================="
         } >> "${log_file}"
         
-        # Start GPU monitoring for this batch size
-        local gpu_csv="${RESULTS_DIR}/${model_name}_bs${bs}_gpu.csv"
+        # Create batch-specific directory for GPU metrics
+        local batch_results_dir="${RESULTS_DIR}/${model_name}_bs${bs}"
+        mkdir -p "${batch_results_dir}"
+        local gpu_csv="${batch_results_dir}/gpu_metrics.csv"
         local gpu_monitor_pid=""
+        
+        # Start GPU monitoring for this batch size
         if [[ -f "${gpu_monitor_script}" ]]; then
-            bash "${gpu_monitor_script}" "${gpu_csv}" "${device_id}" 1 "${model_name}" "${bs}" &
+            bash "${gpu_monitor_script}" "${gpu_csv}" "${device_id}" 1 "${model_name}" "${bs}" "${batch_results_dir}" &
             gpu_monitor_pid=$!
             sleep 2
         fi
@@ -218,11 +218,10 @@ test_model() {
             "benchmark_app -m ${model_path} --batch_size ${bs} -d ${DEVICE} -hint throughput -shape [${bs},3,640,640]" \
             >> "${log_file}" 2>&1
         
-        # Stop GPU monitoring
+        # Stop GPU monitoring (will auto-generate plots on exit)
         if [[ -n "${gpu_monitor_pid}" ]]; then
             kill "${gpu_monitor_pid}" 2>/dev/null || true
-            sleep 1
-            kill -9 "${gpu_monitor_pid}" 2>/dev/null || true
+            wait "${gpu_monitor_pid}" 2>/dev/null || true
         fi
         
         echo "" >> "${log_file}"
@@ -231,18 +230,18 @@ test_model() {
     
     echo -e "${GREEN}[DONE]${NC} Model ${model_name} testing completed"
     
-    # List GPU metric files
-    local gpu_files=$(ls "${RESULTS_DIR}/${model_name}"_bs*_gpu.csv 2>/dev/null | wc -l)
-    if [[ ${gpu_files} -gt 0 ]]; then
-        echo "  GPU metrics: ${gpu_files} files saved"
+    # List GPU metric directories
+    local gpu_dirs=$(ls -d "${RESULTS_DIR}/${model_name}"_bs* 2>/dev/null | wc -l)
+    if [[ ${gpu_dirs} -gt 0 ]]; then
+        echo "  GPU metrics: ${gpu_dirs} batch size results with plots"
+        echo "  Results location: ${RESULTS_DIR}/${model_name}_bs*"
     fi
     echo ""
     
-    # Parse results and generate summary
-    generate_summary "${log_file}" "${summary_file}" "${model_name}"
+    # No longer generate individual summary files
 }
 
-# Function to generate summary from log file
+# Function to parse results from log file (used by combined summary)
 generate_summary() {
     local log_file=$1
     local summary_file=$2
@@ -264,8 +263,10 @@ generate_summary() {
     # Extract throughput and latency for each batch size
     for bs in ${BATCH_SIZES}; do
         # Find the section for this batch size
-        local throughput=$(grep -A 20 "Batch Size: ${bs}" "${log_file}" | grep "Throughput:" | head -n1 | awk '{print $2}')
-        local latency=$(grep -A 20 "Batch Size: ${bs}" "${log_file}" | grep "Median:" | head -n1 | awk '{print $2}')
+        # Format: [ INFO ] Throughput:   1302.37 FPS
+        local throughput=$(grep -A 30 "Batch Size: ${bs}" "${log_file}" | grep "Throughput:" | head -n1 | awk '{print $4}')
+        # Format: [ INFO ]    Median:        2.97 ms
+        local latency=$(grep -A 30 "Batch Size: ${bs}" "${log_file}" | grep "Median:" | head -n1 | awk '{print $4}')
         
         if [[ -n "${throughput}" && -n "${latency}" ]]; then
             printf "%-12s %-15s %-15s\n" "${bs}" "${throughput}" "${latency}" >> "${summary_file}"
@@ -294,6 +295,15 @@ if [[ "${TEST_ALL}" == true ]]; then
     
     # Generate combined summary
     COMBINED_SUMMARY="${RESULTS_DIR}/all_models_summary.txt"
+    
+    # Collect system information first
+    SYSTEM_INFO_SCRIPT="$(cd "$(dirname "$0")/../html" && pwd)/generate_system_info.sh"
+    TEMP_SYSTEM_INFO="/tmp/system_info_$$.json"
+    
+    if [[ -f "${SYSTEM_INFO_SCRIPT}" ]]; then
+        bash "${SYSTEM_INFO_SCRIPT}" "${TEMP_SYSTEM_INFO}" >/dev/null 2>&1
+    fi
+    
     {
         echo "=========================================="
         echo "Combined Benchmark Summary"
@@ -302,18 +312,67 @@ if [[ "${TEST_ALL}" == true ]]; then
         echo "Timestamp: ${TIMESTAMP}"
         echo "Total Models: ${#MODELS[@]}"
         echo ""
+        
+        # Add system information at the beginning
+        if [[ -f "${TEMP_SYSTEM_INFO}" ]]; then
+            echo "=========================================="
+            echo "System Information"
+            echo "=========================================="
+            python3 -c "
+import json
+import sys
+try:
+    with open('${TEMP_SYSTEM_INFO}', 'r') as f:
+        data = json.load(f)
+    print(f\"CPU: {data['system']['name']}\")
+    print(f\"OS: {data['system']['os']}\")
+    print(f\"Kernel: {data['system']['kernel']}\")
+    print(f\"GPU Driver: {data['compute']['gpu_driver']}\")
+    print(f\"VA-API: {data['compute']['vaapi_version']}\")
+    print(f\"DLStreamer: {data['software']['dlstreamer_version']}\")
+    print(f\"OpenVINO: {data['software']['openvino_version']}\")
+except Exception as e:
+    print(f'Error parsing system info: {e}', file=sys.stderr)
+" 2>/dev/null || echo "System info parsing failed"
+            rm -f "${TEMP_SYSTEM_INFO}"
+            echo ""
+        fi
+        
     } > "${COMBINED_SUMMARY}"
     
     for model in "${MODELS[@]}"; do
         model_name=$(basename "$model" .xml)
-        model_dir=$(dirname "$model")
-        if [[ "$model_dir" == *"int8"* ]]; then
-            model_name="${model_name}-int8"
-        fi
+        # Model name already contains fp32/int8 suffix
         
-        summary_file="${RESULTS_DIR}/${model_name}_summary.txt"
-        if [[ -f "${summary_file}" ]]; then
-            cat "${summary_file}" >> "${COMBINED_SUMMARY}"
+        log_file="${RESULTS_DIR}/${model_name}.log"
+        if [[ -f "${log_file}" ]]; then
+            {
+                echo "=========================================="
+                echo "Model: ${model_name}"
+                echo "=========================================="
+                echo "Results:"
+                echo "--------------------------------------"
+                printf "%-12s %-15s %-15s\n" "Batch Size" "Throughput(fps)" "Latency(ms)"
+                echo "--------------------------------------"
+            } >> "${COMBINED_SUMMARY}"
+            
+            # Extract throughput and latency for each batch size
+            for bs in ${BATCH_SIZES}; do
+                # Extract results after the "Batch Size: X" marker
+                section=$(sed -n "/^Batch Size: ${bs}$/,/^Batch Size:/p" "${log_file}" | sed '$d')
+                if [[ -z "$section" ]]; then
+                    # If no next batch size marker, get until end of file
+                    section=$(sed -n "/^Batch Size: ${bs}$/,\$p" "${log_file}")
+                fi
+                
+                throughput=$(echo "$section" | grep "Throughput:" | awk '{print $5}')
+                latency=$(echo "$section" | grep "Median:" | awk '{print $5}')
+                
+                if [[ -n "${throughput}" && -n "${latency}" ]]; then
+                    printf "%-12s %-15s %-15s\n" "${bs}" "${throughput}" "${latency}" >> "${COMBINED_SUMMARY}"
+                fi
+            done
+            
             echo "" >> "${COMBINED_SUMMARY}"
         fi
     done
@@ -321,8 +380,81 @@ if [[ "${TEST_ALL}" == true ]]; then
     echo "Combined summary: ${COMBINED_SUMMARY}"
     
 else
-    # Test single model
+    # Test single model - also generate summary
     test_model "${MODEL_PATH}"
+    
+    # Generate summary for single model
+    model_name=$(basename "${MODEL_PATH}" .xml)
+    # Model name already contains fp32/int8 suffix
+    
+    SUMMARY_FILE="${RESULTS_DIR}/all_models_summary.txt"
+    log_file="${RESULTS_DIR}/${model_name}.log"
+    
+    # Collect system information first
+    SYSTEM_INFO_SCRIPT="$(cd "$(dirname "$0")/../html" && pwd)/generate_system_info.sh"
+    TEMP_SYSTEM_INFO="/tmp/system_info_$$.json"
+    
+    if [[ -f "${SYSTEM_INFO_SCRIPT}" ]]; then
+        bash "${SYSTEM_INFO_SCRIPT}" "${TEMP_SYSTEM_INFO}" >/dev/null 2>&1
+    fi
+    
+    {
+        echo "=========================================="
+        echo "Benchmark Summary: ${model_name}"
+        echo "=========================================="
+        echo "Device: ${DEVICE}"
+        echo "Timestamp: ${TIMESTAMP}"
+        echo ""
+        
+        # Add system information at the beginning
+        if [[ -f "${TEMP_SYSTEM_INFO}" ]]; then
+            echo "=========================================="
+            echo "System Information"
+            echo "=========================================="
+            python3 -c "
+import json
+import sys
+try:
+    with open('${TEMP_SYSTEM_INFO}', 'r') as f:
+        data = json.load(f)
+    print(f\"CPU: {data['system']['name']}\")
+    print(f\"OS: {data['system']['os']}\")
+    print(f\"Kernel: {data['system']['kernel']}\")
+    print(f\"GPU Driver: {data['compute']['gpu_driver']}\")
+    print(f\"VA-API: {data['compute']['vaapi_version']}\")
+    print(f\"DLStreamer: {data['software']['dlstreamer_version']}\")
+    print(f\"OpenVINO: {data['software']['openvino_version']}\")
+except Exception as e:
+    print(f'Error parsing system info: {e}', file=sys.stderr)
+" 2>/dev/null || echo "System info parsing failed"
+            rm -f "${TEMP_SYSTEM_INFO}"
+            echo ""
+        fi
+        
+        echo "Results:"
+        echo "--------------------------------------"
+        printf "%-12s %-15s %-15s\n" "Batch Size" "Throughput(fps)" "Latency(ms)"
+        echo "--------------------------------------"
+    } > "${SUMMARY_FILE}"
+    
+    # Extract throughput and latency for each batch size
+    for bs in ${BATCH_SIZES}; do
+        # Extract results after the "Batch Size: X" marker
+        section=$(sed -n "/^Batch Size: ${bs}$/,/^Batch Size:/p" "${log_file}" | sed '$d')
+        if [[ -z "$section" ]]; then
+            # If no next batch size marker, get until end of file
+            section=$(sed -n "/^Batch Size: ${bs}$/,\$p" "${log_file}")
+        fi
+        
+        throughput=$(echo "$section" | grep "Throughput:" | awk '{print $5}')
+        latency=$(echo "$section" | grep "Median:" | awk '{print $5}')
+        
+        if [[ -n "${throughput}" && -n "${latency}" ]]; then
+            printf "%-12s %-15s %-15s\n" "${bs}" "${throughput}" "${latency}" >> "${SUMMARY_FILE}"
+        fi
+    done
+    
+    echo "" >> "${SUMMARY_FILE}"
 fi
 
 echo ""
@@ -331,11 +463,9 @@ echo ""
 
 # Display quick summary
 echo -e "${BLUE}Quick Summary:${NC}"
-for summary in "${RESULTS_DIR}"/*_summary.txt; do
-    if [[ -f "${summary}" ]]; then
-        echo ""
-        cat "${summary}"
-    fi
-done
+if [[ -f "${RESULTS_DIR}/all_models_summary.txt" ]]; then
+    echo ""
+    cat "${RESULTS_DIR}/all_models_summary.txt"
+fi
 
 echo ""

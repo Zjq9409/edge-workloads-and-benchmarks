@@ -4,6 +4,7 @@ models/
 datasets/
 source-models/
 
+qmassa
 results/*/
 results/**/*.log
 results/**/*.csv
@@ -13,7 +14,8 @@ ov_benchmark/benchmark_results*/
 decode/decode_results*/
 
 media-downloader/*.h265
-zto/.cache/
+zto/.cache/*
+zto/benchmark_results*/
 
 html/data.json
 html/system_info.json
