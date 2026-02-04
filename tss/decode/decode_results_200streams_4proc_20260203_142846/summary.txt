@@ -1,0 +1,33 @@
+======================================
+Decode Benchmark Summary
+======================================
+Timestamp: 20260203_142846
+Video File: /home/dlstreamer/work/media-downloader/media/hevc/apple_720p25_loop30.h265
+Codec: H.265
+GPU Device: GPU.0
+GPU Card: /dev/dri/card0
+Number of Streams: 200
+Number of Processes: 4
+Duration: 120s
+Target FPS: 25
+
+Results:
+--------------------------------------
+Total Decode Throughput: 5383.19 fps
+Per-Stream Average: 26.92 fps/stream
+Theoretical Stream Density: 215 streams
+
+Pipeline:
+multifilesrc location=/home/dlstreamer/work/media-downloader/media/hevc/apple_720p25_loop30.h265 loop=true ! h265parse ! vah265dec ! vapostproc ! "video/x-raw(memory:VAMemory)" ! queue ! gvafpscounter starting-frame=100 ! fakesink sync=false async=false
+
+
+System Information:
+--------------------------------------
+  CPU: Intel® Xeon® w5-3435X
+  OS: Ubuntu 24.04
+  Kernel: 6.14.0-37-generic
+  GPU Driver: 25.40.35563.10
+  VA-API: 1.22.0
+  DLStreamer: 2025.2.0
+  OpenVINO: 2025.3.0.19807
+  Docker: 28.2.2

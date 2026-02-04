@@ -1,0 +1,56 @@
+======================================
+Benchmark Summary
+======================================
+Timestamp: 20260203_193957
+Device: GPU.0
+GPU Card: /dev/dri/card0
+Number of Streams: 86
+Number of Processes: 5
+Duration: 120s
+Batch Size: 32
+Target FPS: 25
+Video File: /home/dlstreamer/work/media-downloader/media/hevc/apple_720p25_loop30.h265
+AI Enabled: true
+Model Path: /home/dlstreamer/work/model-conversion/models/yolo11n/yolo11n_int8.xml
+Python Module: /home/dlstreamer/add_data.py
+MQTT Address: localhost:1883
+
+Results:
+--------------------------------------
+Average Total Throughput: 2160.69 fps
+Throughput per Stream: 25.12 fps/stream
+Theoretical Stream Density: 86
+
+GPU Monitoring:
+--------------------------------------
+Monitor Data (CSV): ./benchmark_results_86streams_5proc_bs32_20260203_193957/gpu_monitor.csv
+Monitor Data (JSON): ./benchmark_results_86streams_5proc_bs32_20260203_193957/gpu_metrics_raw.json
+  Average GPU Utilization: N/A%
+  Average GPU Power: N/AW
+  Average GPU Frequency: N/AMHz
+  Average GPU Memory Used: N/AMiB
+
+System Information:
+--------------------------------------
+  CPU: Intel® Xeon® w5-3435X
+  OS: Ubuntu 24.04
+  Kernel: 6.14.0-37-generic
+  GPU Driver: 25.40.35563.10
+  VA-API Version: 1.22.0
+  Docker Version: 28.2.2
+  DLStreamer Image: intel/dlstreamer:2025.2.0-ubuntu24
+
+Pipeline:
+multifilesrc location=/home/dlstreamer/work/media-downloader/media/hevc/apple_720p25_loop30.h265 loop=true ! h265parse ! vah265dec ! vapostproc ! "video/x-raw(memory:VAMemory)" ! gvadetect model=/home/dlstreamer/work/model-conversion/models/yolo11n/yolo11n_int8.xml device=GPU.0 pre-process-backend=vaapi-surface-sharing model-instance-id=inf0 batch-size=32 ! gvatrack tracking-type=zero-term-imageless ! gvametaconvert add-empty-results=true json-indent=-1 timestamp-utc=true timestamp-microseconds=true ! gvapython module=/home/dlstreamer/add_data.py ! queue ! gvametapublish method=mqtt address=localhost:1883 topic=dlstreamer async-handling=true ! gvafpscounter starting-frame=100 ! fakesink sync=false async=false
+
+System Information:
+--------------------------------------
+  CPU: Intel® Xeon® w5-3435X
+  OS: Ubuntu 24.04
+  Kernel: 6.14.0-37-generic
+  GPU Driver: 25.40.35563.10
+  VA-API: 1.22.0
+  DLStreamer: 2025.2.0
+  OpenVINO: 2025.3.0.19807
+  Docker: 28.2.2
+
