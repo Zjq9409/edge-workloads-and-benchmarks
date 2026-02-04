@@ -17,20 +17,9 @@ fi
 
 # Plot script path
 PLOT_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/plot_gpu_metrics.py"
-QMASSA_PARSER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/parse_qmassa.py"
 
 # Cleanup and plot generation on exit
 cleanup_and_plot() {
-    # Kill sudo keepalive process if running
-    if [[ -n "${SUDO_KEEPALIVE_PID}" ]] && kill -0 "${SUDO_KEEPALIVE_PID}" 2>/dev/null; then
-        kill "${SUDO_KEEPALIVE_PID}" 2>/dev/null || true
-    fi
-    
-    # Kill qmassa process if running
-    if [[ -n "${QMASSA_PID}" ]] && kill -0 "${QMASSA_PID}" 2>/dev/null; then
-        sudo kill "${QMASSA_PID}" 2>/dev/null || true
-    fi
-    
     echo ""
     echo "[GPU Monitor] Monitoring stopped, generating plots..."
     
@@ -66,43 +55,11 @@ cleanup_and_plot() {
         fi
     fi
     
-    # Generate qmassa plots if JSON file exists
-    if [[ -n "${USE_QMASSA}" ]] && [[ "${USE_QMASSA}" == true ]] && [[ -f "${QMASSA_JSON_FILE}" ]]; then
-        echo ""
-        echo "[GPU Monitor] Generating qmassa charts..."
-        
-        QMASSA_OUTPUT_PREFIX="${OUTPUT_DIR}/qmassa_charts"
-        
-        if sudo "${QMASSA_SCRIPT}" plot -j "${QMASSA_JSON_FILE}" -c meminfo,engines,freqs,power,temps -o "${QMASSA_OUTPUT_PREFIX}" > /dev/null 2>&1; then
-            echo "[GPU Monitor] ✓ qmassa charts generated successfully"
-            echo "[GPU Monitor]   SVG files: ${QMASSA_OUTPUT_PREFIX}_*.svg"
-        else
-            echo "[GPU Monitor] ⚠ Failed to generate qmassa charts"
-        fi
-    fi
-    
     exit 0
 }
 
 # Register cleanup handler
 trap cleanup_and_plot EXIT INT TERM
-
-# Detect kernel version and choose monitoring tool
-KERNEL_VERSION=$(uname -r)
-USE_QMASSA=false
-
-# Check if kernel is 6.14.0-37-generic
-if [[ "$KERNEL_VERSION" == "6.14.0-37-generic" ]]; then
-    USE_QMASSA=true
-    QMASSA_SCRIPT="/home/intel/media_ai/edge-workloads-and-benchmarks/qmassa"
-    QMASSA_JSON_FILE="${OUTPUT_DIR}/gpu_metrics_raw.json"
-    
-    if [[ ! -f "$QMASSA_SCRIPT" ]]; then
-        echo "Error: qmassa script not found at $QMASSA_SCRIPT"
-        echo "Falling back to xpu-smi only"
-        USE_QMASSA=false
-    fi
-fi
 
 # Metrics to collect (for xpu-smi)
 METRICS="0,1,2,3,4,18,22,24,25,26,27,36"
@@ -118,26 +75,7 @@ if [[ ! -f "$OUTPUT_FILE" ]]; then
     echo "[GPU Monitor] Initialized CSV with header from xpu-smi"
 fi
 
-# Start qmassa if enabled (runs in background continuously)
-if [[ "$USE_QMASSA" == true ]]; then
-    # Convert device_id (0) to PCI address format
-    PCI_ADDR="0000:18:00.0"
-    
-    echo "[GPU Monitor] Starting qmassa monitoring..."
-    # -m 1000: 1 second interval
-    # -t: save to JSON file
-    # -x: no TUI rendering
-    sudo "$QMASSA_SCRIPT" -d "$PCI_ADDR" -m 1000 -t "$QMASSA_JSON_FILE" -x >/dev/null 2>&1 &
-    QMASSA_PID=$!
-    sleep 2  # Wait for qmassa to initialize
-    echo "[GPU Monitor] qmassa started (PID: $QMASSA_PID), output: $QMASSA_JSON_FILE"
-    
-    # Keep sudo credentials alive for qmassa plot later
-    (while true; do sudo -v; sleep 60; done) 2>/dev/null &
-    SUDO_KEEPALIVE_PID=$!
-fi
-
-# Run xpu-smi monitoring loop (always runs)
+# Run xpu-smi monitoring loop
 echo "[GPU Monitor] Starting xpu-smi monitoring..."
 while true; do
     # Get current timestamp

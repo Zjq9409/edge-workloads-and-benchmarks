@@ -526,6 +526,62 @@ echo -e "${GREEN}========================================${NC}"
 if [[ -f "${LOG_FILE}" ]]; then
     # For multi-process setup, aggregate FPS from all process logs
     if [[ ${NUM_PROCESSES} -gt 1 ]]; then
+        echo -e "${YELLOW}[INFO]${NC} Validating process execution..."
+        
+        # First pass: validate all processes ran for sufficient duration
+        MIN_DURATION=$(LC_ALL=C awk -v d="${DURATION}" 'BEGIN { printf("%.0f", d * 0.9) }')
+        FAILED_PROCESSES=()
+        
+        for i in "${!PROCESS_LOGS[@]}"; do
+            proc_id=$((i + 1))
+            PROC_LOG="${PROCESS_LOGS[$i]}"
+            
+            if [[ -f "${PROC_LOG}" ]]; then
+                # Extract runtime from last FpsCounter line (average XXXsec)
+                PROC_RUNTIME=$(grep 'FpsCounter' "${PROC_LOG}" | grep 'average' | tail -n1 | sed -n 's/.*average \([0-9.]*\)sec.*/\1/p')
+                
+                if [[ -z "${PROC_RUNTIME}" ]]; then
+                    echo -e "${RED}  ✗ Process ${proc_id}: No FPS data found${NC}"
+                    FAILED_PROCESSES+=("${proc_id}")
+                else
+                    # Check if runtime meets minimum threshold
+                    RUNTIME_OK=$(LC_ALL=C awk -v r="${PROC_RUNTIME}" -v m="${MIN_DURATION}" \
+                        'BEGIN { print (r >= m) ? 1 : 0 }')
+                    
+                    if [[ ${RUNTIME_OK} -eq 0 ]]; then
+                        echo -e "${RED}  ✗ Process ${proc_id}: Terminated early (${PROC_RUNTIME}s / ${DURATION}s expected)${NC}"
+                        FAILED_PROCESSES+=("${proc_id}")
+                    else
+                        echo -e "${GREEN}  ✓ Process ${proc_id}: Completed (${PROC_RUNTIME}s)${NC}"
+                    fi
+                fi
+            else
+                echo -e "${RED}  ✗ Process ${proc_id}: Log file not found${NC}"
+                FAILED_PROCESSES+=("${proc_id}")
+            fi
+        done
+        
+        # If any process failed, report and exit
+        if [[ ${#FAILED_PROCESSES[@]} -gt 0 ]]; then
+            echo ""
+            echo -e "${RED}[ERROR]${NC} Benchmark failed: ${#FAILED_PROCESSES[@]} process(es) terminated abnormally"
+            echo -e "${RED}[ERROR]${NC} Failed processes: ${FAILED_PROCESSES[*]}"
+            echo ""
+            echo "Possible causes:"
+            echo "  - System resource exhaustion (GPU/memory overload)"
+            echo "  - Decoder errors or crashes"
+            echo "  - Container or Docker issues"
+            echo ""
+            echo "Suggestions:"
+            echo "  - Reduce number of streams (-n)"
+            echo "  - Try with fewer processes (-P)"
+            echo "  - Check process logs in: ${RESULTS_DIR}/"
+            echo "  - Verify video file is valid: ${VIDEO_FILE}"
+            echo ""
+            exit 1
+        fi
+        
+        echo ""
         echo -e "${YELLOW}[INFO]${NC} Aggregating results from ${NUM_PROCESSES} processes..."
         
         TOTAL_THROUGHPUT=0
@@ -556,7 +612,31 @@ if [[ -f "${LOG_FILE}" ]]; then
         THROUGHPUT="${TOTAL_THROUGHPUT}"
         echo "  - Total aggregated: ${THROUGHPUT} fps from ${PROCESS_COUNT} processes"
     else
-        # Single process - use original logic
+        # Single process - use original logic with validation
+        echo -e "${YELLOW}[INFO]${NC} Validating process execution..."
+        
+        # Extract runtime from last FpsCounter line
+        PROC_RUNTIME=$(grep 'FpsCounter' "${LOG_FILE}" | grep 'average' | tail -n1 | sed -n 's/.*average \([0-9.]*\)sec.*/\1/p')
+        MIN_DURATION=$(LC_ALL=C awk -v d="${DURATION}" 'BEGIN { printf("%.0f", d * 0.9) }')
+        
+        if [[ -z "${PROC_RUNTIME}" ]]; then
+            echo -e "${RED}[ERROR]${NC} No FPS data found in log"
+            exit 1
+        fi
+        
+        RUNTIME_OK=$(LC_ALL=C awk -v r="${PROC_RUNTIME}" -v m="${MIN_DURATION}" \
+            'BEGIN { print (r >= m) ? 1 : 0 }')
+        
+        if [[ ${RUNTIME_OK} -eq 0 ]]; then
+            echo -e "${RED}[ERROR]${NC} Process terminated early (${PROC_RUNTIME}s / ${DURATION}s expected)"
+            echo ""
+            echo "Check log file for errors: ${LOG_FILE}"
+            exit 1
+        fi
+        
+        echo -e "${GREEN}  ✓ Process completed (${PROC_RUNTIME}s)${NC}"
+        echo ""
+        
         THROUGHPUT=$(grep 'FpsCounter' "${LOG_FILE}" | grep 'average' | tail -n1 | sed 's/.*total=//' | cut -d' ' -f1)
     fi
     

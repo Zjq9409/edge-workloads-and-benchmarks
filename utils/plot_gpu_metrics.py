@@ -85,7 +85,8 @@ def plot_gpu_metrics(csv_file, output_dir=None):
         'GPU Frequency (MHz)',
         'GPU Core Temperature (Celsius Degree)',
         'GPU Memory Used (MiB)',
-        'Decoder Engine 0 (%)',
+        'Decoder Engine (%)',  # B60 has single decoder
+        'Decoder Engine 0 (%)',  # ARC770 has multiple decoders
         'Decoder Engine 1 (%)',
         'Media Engine Frequency (MHz)',
     ]
