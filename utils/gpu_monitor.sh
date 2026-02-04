@@ -30,12 +30,15 @@ cleanup_and_plot() {
         if [[ ${LINE_COUNT} -gt 1 ]]; then
             # Generate plots
             if [[ -f "$PLOT_SCRIPT" ]]; then
-                if python3 "$PLOT_SCRIPT" "$OUTPUT_FILE" > /dev/null 2>&1; then
+                echo "[GPU Monitor] Running plot generation..."
+                PLOT_LOG="${OUTPUT_DIR}/plot_generation.log"
+                if python3 "$PLOT_SCRIPT" "$OUTPUT_FILE" 2>&1 | tee "$PLOT_LOG"; then
                     echo "[GPU Monitor] ✓ GPU metrics plots generated successfully"
                     echo "[GPU Monitor]   - ${OUTPUT_DIR}/gpu_metrics_main.png"
                     echo "[GPU Monitor]   - ${OUTPUT_DIR}/gpu_metrics_engines.png"
                 else
                     echo "[GPU Monitor] ⚠ Failed to generate GPU metrics plots"
+                    echo "[GPU Monitor]   Check log: $PLOT_LOG"
                 fi
             else
                 echo "[GPU Monitor] ⚠ Plot script not found: $PLOT_SCRIPT"
