@@ -44,6 +44,10 @@ TEST_ALL=false
 MODELS=(
     "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11n/yolo11n_fp32.xml"
     "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11n/yolo11n_int8.xml"
+    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11m-pose/yolo11m-pose_fp32.xml"
+    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11m-pose/yolo11m-pose_int8.xml"
+    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolov8n-seg/yolov8n-seg_fp32.xml"
+    ""/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolov8n-seg/yolov8n-seg_int8.xml"
 )
 
 # Color output
@@ -199,7 +203,7 @@ test_model() {
     
     # Extract device ID from DEVICE (e.g., GPU.0 -> 0)
     local device_id="${DEVICE##*.}"
-    local gpu_monitor_script="$(cd "$(dirname "$0")/../../../../utils" && pwd)/gpu_monitor.sh"
+    local gpu_monitor_script="$(cd "$(dirname "$0")/../../../utils" && pwd)/gpu_monitor.sh"
     
     # Test each batch size
     local batch_count=0

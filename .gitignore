@@ -10,12 +10,12 @@ results/**/*.log
 results/**/*.csv
 runs/
 
-ov_benchmark/benchmark_results*/
-decode/decode_results*/
+# Ignore all benchmark_results* directories anywhere
+**/benchmark_results*/
+**/decode_results*/
 
 media-downloader/*.h265
 zto/.cache/*
-zto/benchmark_results*/
 
 html/data.json
 html/system_info.json
