@@ -47,7 +47,7 @@ MODELS=(
     "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11m-pose/yolo11m-pose_fp32.xml"
     "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11m-pose/yolo11m-pose_int8.xml"
     "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolov8n-seg/yolov8n-seg_fp32.xml"
-    ""/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolov8n-seg/yolov8n-seg_int8.xml"
+    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolov8n-seg/yolov8n-seg_int8.xml"
 )
 
 # Color output

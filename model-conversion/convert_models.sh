@@ -66,11 +66,11 @@ validate_imagenet_root() {
 
 ensure_venv() {
     if [[ -d "${basedir}/venv" ]]; then
-        echo "[ Info ] Using existing virtual environment at ${basedir}/venv"
-    else
-        echo "[ Info ] Creating virtual environment..."
-	"${basedir}/scripts/setup_env.sh"
+        echo "[ Info ] Removing existing virtual environment at ${basedir}/venv"
+        rm -rf "${basedir}/venv"
     fi
+    echo "[ Info ] Creating virtual environment..."
+    "${basedir}/scripts/setup_env.sh"
 }
 
 download_raw() {

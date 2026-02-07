@@ -138,6 +138,7 @@ def setup_validator_and_dataloader(det_model: YOLO, cfg_path: Path, dataset_dir:
         det_validator.metrics.names = det_validator.names
         det_validator.nc = 1
         det_validator.sigma = OKS_SIGMA
+        det_validator.end2end = False
     else:
         det_validator = det_model.task_map[det_model.task]["validator"](args=args)
         det_validator.data = check_det_dataset(args.data)
@@ -149,6 +150,7 @@ def setup_validator_and_dataloader(det_model: YOLO, cfg_path: Path, dataset_dir:
         det_validator.names = det_model.model.names
         det_validator.metrics.names = det_validator.names
         det_validator.nc = det_model.model.model[-1].nc
+        det_validator.end2end = False
         
         # Additional setup for segmentation models
         if is_seg:
