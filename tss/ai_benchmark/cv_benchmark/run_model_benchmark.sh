@@ -39,6 +39,7 @@ DEVICE="GPU.0"
 BATCH_SIZES="1 4 8 16 32 64 128"
 MODEL_PATH=""
 TEST_ALL=false
+NUM_PROCESSES=1
 
 # Model paths (from model-conversion/models directory)
 MODELS=(
@@ -68,6 +69,7 @@ Common options:
   -m <model>         Model XML path (required unless -a)
   -d <device>        GPU device: GPU.0, GPU.1 (default: GPU.0)
   -b <batch_sizes>   Space-separated batch sizes (default: "1 4 8 16 32 64 128")
+  -p <processes>     Number of parallel processes (default: 1)
   -a                 Test all predefined models
   -h                 Show this help message
 
@@ -75,6 +77,7 @@ Examples:
   ./run_model_benchmark.sh -m /home/intel/models/yolo11n.xml -d GPU.0
   ./run_model_benchmark.sh -a -d GPU.0
   ./run_model_benchmark.sh -m model.xml -b "1 8 32 128"
+  ./run_model_benchmark.sh -m model.xml -d GPU.0 -p 4
 
 For detailed documentation, see: README.md
 
@@ -84,12 +87,13 @@ EOF
 
 # Parse arguments
 GPU_CARD=""
-while getopts "m:d:g:b:ah" opt; do
+while getopts "m:d:g:b:p:ah" opt; do
     case $opt in
         m) MODEL_PATH="$OPTARG" ;;
         d) DEVICE="$OPTARG" ;;
         g) GPU_CARD="$OPTARG" ;;
         b) BATCH_SIZES="$OPTARG" ;;
+        p) NUM_PROCESSES="$OPTARG" ;;
         a) TEST_ALL=true ;;
         h) usage ;;
         *) usage ;;
@@ -113,6 +117,7 @@ echo -e "${GREEN}========================================${NC}"
 echo "Timestamp: ${TIMESTAMP}"
 echo "Device: ${DEVICE}"
 echo "Batch Sizes: ${BATCH_SIZES}"
+echo "Parallel Processes: ${NUM_PROCESSES}"
 if [[ "${TEST_ALL}" == true ]]; then
     echo "Mode: Test all models (${#MODELS[@]} models)"
 else
@@ -209,43 +214,134 @@ test_model() {
     local batch_count=0
     local total_batches=$(echo ${BATCH_SIZES} | wc -w)
     
-    for bs in ${BATCH_SIZES}; do
-        batch_count=$((batch_count + 1))
-        echo -e "${YELLOW}[${batch_count}/${total_batches}]${NC} Testing batch size: ${bs}"
+    if [[ ${NUM_PROCESSES} -eq 1 ]]; then
+        # Single process mode (original behavior)
+        for bs in ${BATCH_SIZES}; do
+            batch_count=$((batch_count + 1))
+            echo -e "${YELLOW}[${batch_count}/${total_batches}]${NC} Testing batch size: ${bs}"
+            
+            {
+                echo "=========================================="
+                echo "Batch Size: ${bs}"
+                echo "=========================================="
+            } >> "${log_file}"
+            
+            # Create batch-specific directory for GPU metrics
+            local batch_results_dir="${RESULTS_DIR}/${model_name}_bs${bs}"
+            mkdir -p "${batch_results_dir}"
+            local gpu_csv="${batch_results_dir}/gpu_metrics.csv"
+            local gpu_monitor_pid=""
+            
+            # Start GPU monitoring for this batch size
+            if [[ -f "${gpu_monitor_script}" ]]; then
+                bash "${gpu_monitor_script}" "${gpu_csv}" "${device_id}" 1 "${model_name}" "${bs}" "${batch_results_dir}" &
+                gpu_monitor_pid=$!
+                sleep 2
+            fi
+            
+            # Run benchmark_app in container
+            docker exec "${CONTAINER_NAME}" bash -c \
+                "benchmark_app -m ${model_path} --batch_size ${bs} -d ${DEVICE} -hint throughput -shape [${bs},3,640,640]" \
+                >> "${log_file}" 2>&1
+            
+            # Stop GPU monitoring (will auto-generate plots on exit)
+            if [[ -n "${gpu_monitor_pid}" ]]; then
+                kill "${gpu_monitor_pid}" 2>/dev/null || true
+                wait "${gpu_monitor_pid}" 2>/dev/null || true
+            fi
+            
+            echo "" >> "${log_file}"
+            sleep 5
+        done
+    else
+        # Multi-process mode
+        echo -e "${YELLOW}[INFO]${NC} Running in multi-process mode with ${NUM_PROCESSES} parallel processes"
         
-        {
-            echo "=========================================="
-            echo "Batch Size: ${bs}"
-            echo "=========================================="
-        } >> "${log_file}"
+        # Function to run single batch size test
+        run_batch_test() {
+            local bs=$1
+            local process_id=$2
+            local process_log="${log_file%.log}_p${process_id}_bs${bs}.log"
+            
+            {
+                echo "=========================================="
+                echo "Batch Size: ${bs} (Process ${process_id})"
+                echo "=========================================="
+            } > "${process_log}"
+            
+            # Create batch-specific directory for GPU metrics
+            local batch_results_dir="${RESULTS_DIR}/${model_name}_bs${bs}_p${process_id}"
+            mkdir -p "${batch_results_dir}"
+            
+            # Run benchmark_app in container (no GPU monitoring in multi-process mode to avoid conflicts)
+            docker exec "${CONTAINER_NAME}" bash -c \
+                "benchmark_app -m ${model_path} --batch_size ${bs} -d ${DEVICE} -hint throughput -shape [${bs},3,640,640]" \
+                >> "${process_log}" 2>&1
+            
+            echo "" >> "${process_log}"
+        }
         
-        # Create batch-specific directory for GPU metrics
-        local batch_results_dir="${RESULTS_DIR}/${model_name}_bs${bs}"
+        export -f run_batch_test
+        
+        # Start GPU monitoring for the entire multi-process test period
+        local batch_results_dir="${RESULTS_DIR}/${model_name}_multiprocess"
         mkdir -p "${batch_results_dir}"
         local gpu_csv="${batch_results_dir}/gpu_metrics.csv"
         local gpu_monitor_pid=""
         
-        # Start GPU monitoring for this batch size
         if [[ -f "${gpu_monitor_script}" ]]; then
-            bash "${gpu_monitor_script}" "${gpu_csv}" "${device_id}" 1 "${model_name}" "${bs}" "${batch_results_dir}" &
+            bash "${gpu_monitor_script}" "${gpu_csv}" "${device_id}" 1 "${model_name}" "multi" "${batch_results_dir}" &
             gpu_monitor_pid=$!
             sleep 2
         fi
         
-        # Run benchmark_app in container
-        docker exec "${CONTAINER_NAME}" bash -c \
-            "benchmark_app -m ${model_path} --batch_size ${bs} -d ${DEVICE} -hint throughput -shape [${bs},3,640,640]" \
-            >> "${log_file}" 2>&1
+        # Launch tests in parallel batches
+        local pids=()
+        local process_id=0
         
-        # Stop GPU monitoring (will auto-generate plots on exit)
+        for bs in ${BATCH_SIZES}; do
+            batch_count=$((batch_count + 1))
+            process_id=$((process_id + 1))
+            
+            echo -e "${YELLOW}[${batch_count}/${total_batches}]${NC} Launching batch size: ${bs} (process ${process_id})"
+            
+            run_batch_test "${bs}" "${process_id}" &
+            pids+=($!)
+            
+            # If we've reached the process limit, wait for this batch to complete
+            if [[ ${#pids[@]} -ge ${NUM_PROCESSES} ]]; then
+                for pid in "${pids[@]}"; do
+                    wait "${pid}" 2>/dev/null || true
+                done
+                pids=()
+                sleep 2
+            fi
+        done
+        
+        # Wait for remaining processes
+        for pid in "${pids[@]}"; do
+            wait "${pid}" 2>/dev/null || true
+        done
+        
+        # Stop GPU monitoring
         if [[ -n "${gpu_monitor_pid}" ]]; then
             kill "${gpu_monitor_pid}" 2>/dev/null || true
             wait "${gpu_monitor_pid}" 2>/dev/null || true
         fi
         
-        echo "" >> "${log_file}"
+        # Merge all process logs into main log file
+        echo -e "${YELLOW}[INFO]${NC} Merging process logs..."
+        for bs in ${BATCH_SIZES}; do
+            for process_log in "${log_file%.log}"_p*_bs${bs}.log; do
+                if [[ -f "${process_log}" ]]; then
+                    cat "${process_log}" >> "${log_file}"
+                    # Keep individual process logs for reference
+                fi
+            done
+        done
+        
         sleep 5
-    done
+    fi
     
     echo -e "${GREEN}[DONE]${NC} Model ${model_name} testing completed"
     
