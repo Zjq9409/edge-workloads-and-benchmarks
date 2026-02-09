@@ -120,9 +120,24 @@ run_auto_tune() {
     echo -e "${YELLOW}[TUNE Step 1/2]${NC} Running quick test with ${test_streams} streams (${processes} processes, ${test_duration}s)..."
     
     # Step 1: Run quick benchmark test (disable auto-tune for recursive call)
+    # Capture errors but suppress normal output
+    TUNE_ERROR_LOG="/tmp/decode_tune_error_$$.log"
     AUTO_TUNE=false DURATION=$test_duration NUM_STREAMS=$test_streams NUM_PROCESSES=$processes \
         bash "$0" -v "$VIDEO_FILE" -n $test_streams -P $processes \
-        -d "$DEVICE" -i $test_duration -t "$TARGET_FPS" >/dev/null 2>&1
+        -d "$DEVICE" -i $test_duration -t "$TARGET_FPS" 2>"$TUNE_ERROR_LOG" >/dev/null
+    TUNE_EXIT_CODE=$?
+    
+    # If test failed, show error and exit
+    if [[ $TUNE_EXIT_CODE -ne 0 ]]; then
+        echo -e "${RED}[TUNE]${NC} Quick test failed with exit code $TUNE_EXIT_CODE"
+        if [[ -f "$TUNE_ERROR_LOG" && -s "$TUNE_ERROR_LOG" ]]; then
+            echo -e "${RED}[TUNE]${NC} Error output:"
+            tail -20 "$TUNE_ERROR_LOG"
+        fi
+        rm -f "$TUNE_ERROR_LOG"
+        exit 1
+    fi
+    rm -f "$TUNE_ERROR_LOG"
     
     # Find the most recent decode_results directory
     local result_dir=$(ls -td decode_results_${test_streams}streams_${processes}proc_* 2>/dev/null | head -1)
@@ -529,7 +544,12 @@ if [[ -f "${LOG_FILE}" ]]; then
         echo -e "${YELLOW}[INFO]${NC} Validating process execution..."
         
         # First pass: validate all processes ran for sufficient duration
-        MIN_DURATION=$(LC_ALL=C awk -v d="${DURATION}" 'BEGIN { printf("%.0f", d * 0.9) }')
+        # For short tests (<60s), use more tolerant threshold due to pipeline startup/clock sync
+        if [[ ${DURATION} -lt 60 ]]; then
+            MIN_DURATION=$(LC_ALL=C awk -v d="${DURATION}" 'BEGIN { printf("%.0f", d * 0.75) }')
+        else
+            MIN_DURATION=$(LC_ALL=C awk -v d="${DURATION}" 'BEGIN { printf("%.0f", d * 0.9) }')
+        fi
         FAILED_PROCESSES=()
         
         for i in "${!PROCESS_LOGS[@]}"; do
@@ -549,7 +569,7 @@ if [[ -f "${LOG_FILE}" ]]; then
                         'BEGIN { print (r >= m) ? 1 : 0 }')
                     
                     if [[ ${RUNTIME_OK} -eq 0 ]]; then
-                        echo -e "${RED}  ✗ Process ${proc_id}: Terminated early (${PROC_RUNTIME}s / ${DURATION}s expected)${NC}"
+                        echo -e "${RED}  ✗ Process ${proc_id}: Terminated early (${PROC_RUNTIME}s / ${MIN_DURATION}s minimum, ${DURATION}s expected)${NC}"
                         FAILED_PROCESSES+=("${proc_id}")
                     else
                         echo -e "${GREEN}  ✓ Process ${proc_id}: Completed (${PROC_RUNTIME}s)${NC}"
@@ -567,12 +587,17 @@ if [[ -f "${LOG_FILE}" ]]; then
             echo -e "${RED}[ERROR]${NC} Benchmark failed: ${#FAILED_PROCESSES[@]} process(es) terminated abnormally"
             echo -e "${RED}[ERROR]${NC} Failed processes: ${FAILED_PROCESSES[*]}"
             echo ""
+            echo "Note: FpsCounter time measures pipeline processing time, not wall-clock time."
+            echo "Under heavy load, pipeline time may be less than wall-clock time."
+            echo ""
             echo "Possible causes:"
             echo "  - System resource exhaustion (GPU/memory overload)"
+            echo "  - FpsCounter time lagging behind wall-clock under heavy load (normal)"
             echo "  - Decoder errors or crashes"
             echo "  - Container or Docker issues"
             echo ""
             echo "Suggestions:"
+            echo "  - If FpsCounter times are close to ${MIN_DURATION}s, this may be normal under load"
             echo "  - Reduce number of streams (-n)"
             echo "  - Try with fewer processes (-P)"
             echo "  - Check process logs in: ${RESULTS_DIR}/"
@@ -617,7 +642,12 @@ if [[ -f "${LOG_FILE}" ]]; then
         
         # Extract runtime from last FpsCounter line
         PROC_RUNTIME=$(grep 'FpsCounter' "${LOG_FILE}" | grep 'average' | tail -n1 | sed -n 's/.*average \([0-9.]*\)sec.*/\1/p')
-        MIN_DURATION=$(LC_ALL=C awk -v d="${DURATION}" 'BEGIN { printf("%.0f", d * 0.9) }')
+        # For short tests (<60s), use more tolerant threshold
+        if [[ ${DURATION} -lt 60 ]]; then
+            MIN_DURATION=$(LC_ALL=C awk -v d="${DURATION}" 'BEGIN { printf("%.0f", d * 0.75) }')
+        else
+            MIN_DURATION=$(LC_ALL=C awk -v d="${DURATION}" 'BEGIN { printf("%.0f", d * 0.9) }')
+        fi
         
         if [[ -z "${PROC_RUNTIME}" ]]; then
             echo -e "${RED}[ERROR]${NC} No FPS data found in log"
@@ -628,8 +658,10 @@ if [[ -f "${LOG_FILE}" ]]; then
             'BEGIN { print (r >= m) ? 1 : 0 }')
         
         if [[ ${RUNTIME_OK} -eq 0 ]]; then
-            echo -e "${RED}[ERROR]${NC} Process terminated early (${PROC_RUNTIME}s / ${DURATION}s expected)"
+            echo -e "${RED}[ERROR]${NC} Process terminated early (${PROC_RUNTIME}s / ${MIN_DURATION}s minimum, ${DURATION}s expected)"
             echo ""
+            echo "Note: FpsCounter time measures pipeline processing time, not wall-clock time."
+            echo "Under heavy load, pipeline time may be less than wall-clock time."
             echo "Check log file for errors: ${LOG_FILE}"
             exit 1
         fi
