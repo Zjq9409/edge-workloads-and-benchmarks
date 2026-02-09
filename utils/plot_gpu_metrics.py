@@ -88,6 +88,9 @@ def plot_gpu_metrics(csv_file, output_dir=None):
         'Decoder Engine (%)',  # B60 has single decoder
         'Decoder Engine 0 (%)',  # ARC770 has multiple decoders
         'Decoder Engine 1 (%)',
+        'Media Enhancement Engine (%)',  # B60 has 1, ARC770 has 2
+        'Media Enhancement Engine 0 (%)',  # ARC770 first enhancement engine
+        'Media Enhancement Engine 1 (%)',  # ARC770 second enhancement engine
         'Media Engine Frequency (MHz)',
     ]
     
@@ -270,6 +273,12 @@ def plot_gpu_metrics(csv_file, output_dir=None):
     # Print encoder engines
     for col in sorted(available_columns):
         if 'Encoder Engine' in col:
+            data = pd.to_numeric(df[col], errors='coerce')
+            print(f"{col:45s}: Avg={data.mean():7.2f}, Max={data.max():7.2f}, Min={data.min():7.2f}")
+    
+    # Print media enhancement engines
+    for col in sorted(available_columns):
+        if 'Media Enhancement Engine' in col:
             data = pd.to_numeric(df[col], errors='coerce')
             print(f"{col:45s}: Avg={data.mean():7.2f}, Max={data.max():7.2f}, Min={data.min():7.2f}")
     

@@ -42,6 +42,7 @@ NUM_PROCESSES=1
 USER_SET_PROCESSES=false
 DEVICE="GPU.0"
 VIDEO_FILE="/home/dlstreamer/work/media-downloader/media/hevc/apple_720p25_loop30.h265"
+#VIDEO_FILE="/home/dlstreamer/work/media-downloader/media/h264/1280x720_25fps.h264"
 AUTO_TUNE=false
 TUNE_THRESHOLD=25.0
 TUNE_SHORT_DURATION=30
@@ -96,174 +97,209 @@ while getopts "v:n:P:d:g:i:t:s:Th" opt; do
     esac
 done
 
-# Auto-tune mode function
+# Auto-tune mode function - Progressive tuning inspired by tune_local_streams.sh
 run_auto_tune() {
-    local test_streams=$NUM_STREAMS
+    local current_streams=$NUM_STREAMS
+    local max_streams=0
+    local max_streams_fps=0
+    local max_streams_total=0
+    local max_streams_dir=""
+    local step_size=10
     local test_duration=$TUNE_SHORT_DURATION
-    # Auto-calculate processes only if user didn't specify
-    local processes=$NUM_PROCESSES
-    if [[ "${USER_SET_PROCESSES}" == false ]]; then
-        processes=$(( (test_streams + 49) / 50 ))
-        [[ $processes -lt 1 ]] && processes=1
-    fi
+    local initial_step_size=10
     
     echo -e "${GREEN}========================================${NC}"
     echo -e "${GREEN}Auto-Tune Mode: Finding Maximum Decode Streams${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo "Video: ${VIDEO_FILE}"
-    echo "Test streams: ${test_streams}"
+    echo "Starting streams: ${current_streams}"
+    echo "Initial step size: ${initial_step_size}"
     echo "FPS threshold: ${TUNE_THRESHOLD}"
-    echo "Test duration: ${test_duration}s"
+    echo "Quick test duration: ${test_duration}s"
+    echo "Final test duration: 120s"
     echo "Device: ${DEVICE}"
     echo ""
     
-    echo -e "${YELLOW}[TUNE Step 1/2]${NC} Running quick test with ${test_streams} streams (${processes} processes, ${test_duration}s)..."
+    log_tune() {
+        echo -e "${YELLOW}[TUNE]${NC} $*"
+    }
     
-    # Step 1: Run quick benchmark test (disable auto-tune for recursive call)
-    # Capture errors but suppress normal output
-    TUNE_ERROR_LOG="/tmp/decode_tune_error_$$.log"
-    AUTO_TUNE=false DURATION=$test_duration NUM_STREAMS=$test_streams NUM_PROCESSES=$processes \
-        bash "$0" -v "$VIDEO_FILE" -n $test_streams -P $processes \
-        -d "$DEVICE" -i $test_duration -t "$TARGET_FPS" 2>"$TUNE_ERROR_LOG" >/dev/null
-    TUNE_EXIT_CODE=$?
+    # Progressive tuning loop
+    log_tune "Starting progressive tuning from ${current_streams} streams..."
+    local iteration=0
+    local max_iterations=50  # Safety limit
     
-    # If test failed, show error and exit
-    if [[ $TUNE_EXIT_CODE -ne 0 ]]; then
-        echo -e "${RED}[TUNE]${NC} Quick test failed with exit code $TUNE_EXIT_CODE"
-        if [[ -f "$TUNE_ERROR_LOG" && -s "$TUNE_ERROR_LOG" ]]; then
-            echo -e "${RED}[TUNE]${NC} Error output:"
-            tail -20 "$TUNE_ERROR_LOG"
+    while [[ $iteration -lt $max_iterations ]]; do
+        iteration=$((iteration + 1))
+        
+        # Calculate processes for current stream count
+        local processes
+        if [[ "${USER_SET_PROCESSES}" == true ]]; then
+            processes=$NUM_PROCESSES
+        else
+            processes=$(( (current_streams + 49) / 50 ))
+            [[ $processes -lt 1 ]] && processes=1
+        fi
+        
+        log_tune "[$iteration] Testing ${current_streams} streams (${processes} processes, step size: ${step_size})..."
+        
+        # Run benchmark test (disable auto-tune for recursive call)
+        TUNE_ERROR_LOG="/tmp/decode_tune_error_$$_${iteration}.log"
+        AUTO_TUNE=false DURATION=$test_duration NUM_STREAMS=$current_streams NUM_PROCESSES=$processes \
+            bash "$0" -v "$VIDEO_FILE" -n $current_streams -P $processes \
+            -d "$DEVICE" -i $test_duration -t "$TARGET_FPS" 2>"$TUNE_ERROR_LOG" >/dev/null
+        TUNE_EXIT_CODE=$?
+        
+        # Check if test failed
+        if [[ $TUNE_EXIT_CODE -ne 0 ]]; then
+            log_tune "✗ Test with ${current_streams} streams failed with exit code $TUNE_EXIT_CODE"
+            
+            if [[ $step_size -gt 1 ]]; then
+                # Reduce step size and try again with last successful count plus 1
+                step_size=1
+                if [[ $max_streams -gt 0 ]]; then
+                    current_streams=$((max_streams + step_size))
+                    log_tune "Reducing step size to ${step_size}, next try: ${current_streams} streams"
+                else
+                    log_tune "No successful runs yet, stopping tuning"
+                    rm -f "$TUNE_ERROR_LOG"
+                    break
+                fi
+            else
+                log_tune "Reached limit with step size 1, stopping tuning"
+                rm -f "$TUNE_ERROR_LOG"
+                break
+            fi
+            rm -f "$TUNE_ERROR_LOG"
+            continue
         fi
         rm -f "$TUNE_ERROR_LOG"
+        
+        # Find the most recent decode_results directory
+        local result_dir=$(ls -td decode_results_${current_streams}streams_${processes}proc_* 2>/dev/null | head -1)
+        
+        if [[ -z "$result_dir" || ! -f "$result_dir/summary.txt" ]]; then
+            log_tune "✗ Failed to find result summary for ${current_streams} streams"
+            
+            if [[ $step_size -gt 1 ]]; then
+                step_size=1
+                if [[ $max_streams -gt 0 ]]; then
+                    current_streams=$((max_streams + step_size))
+                    log_tune "Reducing step size to ${step_size}, next try: ${current_streams} streams"
+                else
+                    break
+                fi
+            else
+                break
+            fi
+            continue
+        fi
+        
+        # Extract metrics from summary.txt
+        local per_stream_fps=$(grep "Per-Stream Average:" "$result_dir/summary.txt" | grep -oP '\K[0-9.]+(?= fps/stream)')
+        local total_throughput=$(grep "Total Decode Throughput:" "$result_dir/summary.txt" | grep -oP '\K[0-9.]+(?= fps)')
+        
+        if [[ -z "$per_stream_fps" ]]; then
+            log_tune "✗ Failed to parse FPS from results"
+            
+            if [[ $step_size -gt 1 ]]; then
+                step_size=1
+                if [[ $max_streams -gt 0 ]]; then
+                    current_streams=$((max_streams + step_size))
+                fi
+            else
+                break
+            fi
+            continue
+        fi
+        
+        # Check if FPS meets threshold
+        local fps_ok=$(awk -v fps="$per_stream_fps" -v threshold="$TUNE_THRESHOLD" 'BEGIN { print (fps >= threshold) ? 1 : 0 }')
+        
+        if [[ $fps_ok -eq 1 ]]; then
+            log_tune "✓ ${current_streams} streams PASSED: ${per_stream_fps} fps/stream (${total_throughput} fps total)"
+            max_streams=$current_streams
+            max_streams_fps=$per_stream_fps
+            max_streams_total=$total_throughput
+            max_streams_dir=$result_dir
+            
+            # Continue with same step size
+            current_streams=$((current_streams + step_size))
+        else
+            log_tune "✗ ${current_streams} streams FAILED: ${per_stream_fps} fps/stream < ${TUNE_THRESHOLD} threshold"
+            
+            if [[ $step_size -gt 1 ]]; then
+                # Reduce step size and try from last successful count
+                step_size=1
+                if [[ $max_streams -gt 0 ]]; then
+                    current_streams=$((max_streams + step_size))
+                    log_tune "Reducing step size to ${step_size}, next try: ${current_streams} streams"
+                else
+                    log_tune "Initial test failed, try reducing starting streams (-n)"
+                    break
+                fi
+            else
+                # We're at step size 1 and failed, so we found the maximum
+                log_tune "Found maximum at ${max_streams} streams"
+                break
+            fi
+        fi
+        
+        # Safety check: avoid too many streams
+        if [[ $current_streams -gt 1000 ]]; then
+            log_tune "Reached safety limit of 1000 streams, stopping"
+            break
+        fi
+    done
+    
+    if [[ $iteration -ge $max_iterations ]]; then
+        log_tune "Reached maximum iterations (${max_iterations}), stopping"
+    fi
+    
+    # Check if we found any valid configuration
+    if [[ $max_streams -eq 0 ]]; then
+        echo ""
+        echo -e "${RED}========================================${NC}"
+        echo -e "${RED}Auto-Tune Failed${NC}"
+        echo -e "${RED}========================================${NC}"
+        echo "Could not find any configuration meeting FPS threshold: ${TUNE_THRESHOLD}"
+        echo ""
+        echo "Suggestions:"
+        echo "  - Lower the FPS threshold with -s option"
+        echo "  - Try with fewer starting streams (-n)"
+        echo "  - Check if video file is valid: ${VIDEO_FILE}"
+        echo "  - Verify GPU device is working: ${DEVICE}"
+        echo ""
         exit 1
     fi
-    rm -f "$TUNE_ERROR_LOG"
     
-    # Find the most recent decode_results directory
-    local result_dir=$(ls -td decode_results_${test_streams}streams_${processes}proc_* 2>/dev/null | head -1)
-    
-    if [[ -z "$result_dir" || ! -f "$result_dir/summary.txt" ]]; then
-        echo -e "${RED}[TUNE]${NC} Failed to find result summary"
-        exit 1
-    fi
-    
-    # Extract metrics from summary.txt
-    local per_stream_fps=$(grep "Per-Stream Average:" "$result_dir/summary.txt" | grep -oP '\K[0-9.]+(?= fps/stream)')
-    local theoretical_streams=$(grep "Theoretical Stream Density:" "$result_dir/summary.txt" | grep -oP '\K[0-9]+(?= streams)')
-    local total_throughput=$(grep "Total Decode Throughput:" "$result_dir/summary.txt" | grep -oP '\K[0-9.]+(?= fps)')
-    
-    if [[ -z "$per_stream_fps" || -z "$theoretical_streams" ]]; then
-        echo -e "${RED}[TUNE]${NC} Failed to parse results"
-        exit 1
-    fi
-    
-    echo -e "${GREEN}[TUNE Step 1/2]${NC} Initial test complete:"
-    echo "  - Tested: ${test_streams} streams @ ${per_stream_fps} fps/stream"
-    echo "  - Total Throughput: ${total_throughput} fps"
-    echo "  - Theoretical Max: ${theoretical_streams} streams"
+    # Run final verification test with optimal streams for full duration
     echo ""
+    log_tune "Running final verification with ${max_streams} streams (120s)..."
     
-    # Step 2: Calculate optimal processes for verification (50 streams per process)
-    local verify_processes
+    local final_processes
     if [[ "${USER_SET_PROCESSES}" == true ]]; then
-        verify_processes=$NUM_PROCESSES
-        echo -e "${YELLOW}[TUNE Step 2/2]${NC} Running verification with ${theoretical_streams} streams (${verify_processes} processes [user-specified], ~$((theoretical_streams / verify_processes)) streams/process, 120s)..."
+        final_processes=$NUM_PROCESSES
     else
-        verify_processes=$(( (theoretical_streams + 49) / 50 ))
-        [[ $verify_processes -lt 1 ]] && verify_processes=1
-        echo -e "${YELLOW}[TUNE Step 2/2]${NC} Running verification with ${theoretical_streams} streams (${verify_processes} processes [auto-calculated], ~$((theoretical_streams / verify_processes)) streams/process, 120s)..."
+        final_processes=$(( (max_streams + 49) / 50 ))
+        [[ $final_processes -lt 1 ]] && final_processes=1
     fi
     
-    # Run verification benchmark (disable auto-tune for recursive call)
-    AUTO_TUNE=false DURATION=120 NUM_STREAMS=$theoretical_streams NUM_PROCESSES=$verify_processes \
-        bash "$0" -v "$VIDEO_FILE" -n $theoretical_streams -P $verify_processes \
+    AUTO_TUNE=false DURATION=120 NUM_STREAMS=$max_streams NUM_PROCESSES=$final_processes \
+        bash "$0" -v "$VIDEO_FILE" -n $max_streams -P $final_processes \
         -d "$DEVICE" -i 120 -t "$TARGET_FPS"
     
-    # Find verification results
-    local verify_dir=$(ls -td decode_results_${theoretical_streams}streams_${verify_processes}proc_* 2>/dev/null | head -1)
+    # Find final verification results
+    local final_dir=$(ls -td decode_results_${max_streams}streams_${final_processes}proc_* 2>/dev/null | head -1)
+    local final_fps=$max_streams_fps
+    local final_total=$max_streams_total
     
-    if [[ -z "$verify_dir" || ! -f "$verify_dir/summary.txt" ]]; then
-        echo -e "${RED}[TUNE]${NC} Verification test failed"
-        exit 1
+    if [[ -n "$final_dir" && -f "$final_dir/summary.txt" ]]; then
+        final_fps=$(grep "Per-Stream Average:" "$final_dir/summary.txt" | grep -oP '\K[0-9.]+(?= fps/stream)' || echo "$max_streams_fps")
+        final_total=$(grep "Total Decode Throughput:" "$final_dir/summary.txt" | grep -oP '\K[0-9.]+(?= fps)' || echo "$max_streams_total")
     fi
     
-    # Extract verification metrics
-    local verify_fps=$(grep "Per-Stream Average:" "$verify_dir/summary.txt" | grep -oP '\K[0-9.]+(?= fps/stream)')
-    local verify_total=$(grep "Total Decode Throughput:" "$verify_dir/summary.txt" | grep -oP '\K[0-9.]+(?= fps)')
-    
-    echo -e "${GREEN}[TUNE Step 2/2]${NC} Verification complete: ${verify_fps} fps/stream"
-    
-    # Step 3: Fine-tune if verification didn't meet threshold
-    local final_streams=$theoretical_streams
-    local final_fps=$verify_fps
-    local final_total=$verify_total
-    local final_dir=$verify_dir
-    
-    # Check if we need to fine-tune (per-stream FPS below threshold)
-    local fps_check=$(awk -v fps="$verify_fps" -v threshold="$TUNE_THRESHOLD" 'BEGIN { print (fps < threshold) ? 1 : 0 }')
-    
-    if [[ $fps_check -eq 1 ]]; then
-        echo ""
-        echo -e "${YELLOW}[TUNE Step 3/3]${NC} Per-stream FPS (${verify_fps}) below threshold (${TUNE_THRESHOLD}), fine-tuning..."
-        
-        local current_streams=$((theoretical_streams - 1))
-        local max_attempts=20  # Safety limit to avoid infinite loop
-        local attempt=0
-        
-        while [[ $attempt -lt $max_attempts && $current_streams -gt 0 ]]; do
-            attempt=$((attempt + 1))
-            
-            # Calculate processes for current stream count
-            local tune_processes
-            if [[ "${USER_SET_PROCESSES}" == true ]]; then
-                tune_processes=$NUM_PROCESSES
-            else
-                tune_processes=$(( (current_streams + 49) / 50 ))
-                [[ $tune_processes -lt 1 ]] && tune_processes=1
-            fi
-            
-            echo -e "${YELLOW}[TUNE 3/${max_attempts}]${NC} Testing ${current_streams} streams (${tune_processes} processes)..."
-            
-            # Run test with current stream count
-            AUTO_TUNE=false DURATION=120 NUM_STREAMS=$current_streams NUM_PROCESSES=$tune_processes \
-                bash "$0" -v "$VIDEO_FILE" -n $current_streams -P $tune_processes \
-                -d "$DEVICE" -i 120 -t "$TARGET_FPS" >/dev/null 2>&1
-            
-            # Find results
-            local tune_dir=$(ls -td decode_results_${current_streams}streams_${tune_processes}proc_* 2>/dev/null | head -1)
-            
-            if [[ -z "$tune_dir" || ! -f "$tune_dir/summary.txt" ]]; then
-                echo -e "${RED}[TUNE]${NC} Test failed, stopping fine-tune"
-                break
-            fi
-            
-            # Extract metrics
-            local tune_fps=$(grep "Per-Stream Average:" "$tune_dir/summary.txt" | grep -oP '\K[0-9.]+(?= fps/stream)')
-            local tune_total=$(grep "Total Decode Throughput:" "$tune_dir/summary.txt" | grep -oP '\K[0-9.]+(?= fps)')
-            
-            echo "  Result: ${tune_fps} fps/stream (${tune_total} fps total)"
-            
-            # Check if we met the threshold
-            fps_check=$(awk -v fps="$tune_fps" -v threshold="$TUNE_THRESHOLD" 'BEGIN { print (fps >= threshold) ? 1 : 0 }')
-            
-            if [[ $fps_check -eq 1 ]]; then
-                echo -e "${GREEN}[TUNE]${NC} ✓ Found optimal streams: ${current_streams} @ ${tune_fps} fps/stream"
-                final_streams=$current_streams
-                final_fps=$tune_fps
-                final_total=$tune_total
-                final_dir=$tune_dir
-                break
-            fi
-            
-            # Decrease stream count and continue
-            current_streams=$((current_streams - 1))
-        done
-        
-        if [[ $fps_check -eq 0 ]]; then
-            echo -e "${YELLOW}[TUNE]${NC} Fine-tune completed, best result: ${final_streams} streams @ ${final_fps} fps/stream"
-        fi
-    fi
-    
+    # Display final results
     echo ""
     echo -e "${GREEN}========================================${NC}"
     echo -e "${GREEN}Auto-Tune Results (Decode)${NC}"
@@ -272,16 +308,23 @@ run_auto_tune() {
     echo "Device: ${DEVICE}"
     echo "FPS Threshold: ${TUNE_THRESHOLD}"
     echo ""
-    echo "Initial Test (${test_streams} streams):"
-    echo "  Per-Stream FPS: ${per_stream_fps} fps"
-    echo "  Total Throughput: ${total_throughput} fps"
+    echo "Tuning Process:"
+    echo "  Starting Streams: ${NUM_STREAMS}"
+    echo "  Initial Step Size: ${initial_step_size}"
+    echo "  Iterations: ${iteration}"
     echo ""
-    echo "Final Result (${final_streams} streams):"
+    echo "Optimal Configuration:"
+    echo "  Maximum Streams: ${max_streams}"
     echo "  Per-Stream FPS: ${final_fps} fps"
     echo "  Total Throughput: ${final_total} fps"
+    echo "  Processes: ${final_processes}"
     echo "  Status: $(awk -v fps="$final_fps" -v threshold="$TUNE_THRESHOLD" 'BEGIN { print (fps >= threshold) ? "✓ PASS" : "✗ BELOW THRESHOLD" }')"
     echo ""
-    echo "Results saved to: ${final_dir}"
+    if [[ -n "$final_dir" ]]; then
+        echo "Final results saved to: ${final_dir}"
+    else
+        echo "Quick test results in: ${max_streams_dir}"
+    fi
     echo ""
     
     exit 0
