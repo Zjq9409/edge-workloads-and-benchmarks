@@ -41,6 +41,7 @@ DURATION=120
 TARGET_FPS=25
 NUM_STREAMS=1
 NUM_PROCESSES=1
+PROCESS_SWEEP=""
 DEVICE="GPU.0"
 VIDEO_FILE="/home/dlstreamer/work/media-downloader/media/hevc/apple_720p25_loop30.h265"
 MODEL_PATH_INT8="/home/dlstreamer/work/model-conversion/models/yolo11n/yolo11n_int8.xml"
@@ -149,6 +150,7 @@ Usage: $0 [OPTIONS]
 Common options:
   -n <num_streams>   Number of AI streams (default: 1)
   -P <num_processes> Number of processes (default: 1)
+  -P-sweep <list>    Test multiple process counts (e.g., "1,2,4,8")
   -d <device>        GPU device: GPU.0, GPU.1 (default: GPU.0)
   -b <batch_size>    Inference batch size (default: 1)
   -i <duration>      Test duration in seconds (default: 120)
@@ -161,6 +163,7 @@ Examples:
   ./run_pipeline_benchmark.sh -n 32 -P 4 -d GPU.0 -b 32 -a -i 120
   ./run_pipeline_benchmark.sh -n 48 -P 6 -d GPU.0 -b 32 -a -int8 -i 120
   ./run_pipeline_benchmark.sh -n 40 -d GPU.0 -b 32 -a -T
+  ./run_pipeline_benchmark.sh -n 32 -P-sweep "1,2,4,8" -d GPU.0 -b 32 -a -i 120
 
 For detailed documentation, see: README.md
 
@@ -194,6 +197,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -P)
             NUM_PROCESSES="$2"
+            shift 2
+            ;;
+        -P-sweep)
+            PROCESS_SWEEP="$2"
             shift 2
             ;;
         -d)
@@ -256,6 +263,162 @@ if [[ -n "${MODEL_OVERRIDE}" ]]; then
     MODEL_PATH="${MODEL_OVERRIDE}"
 fi
 
+# Process sweep mode - test multiple process counts
+if [[ -n "${PROCESS_SWEEP}" ]]; then
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}Process Sweep Mode${NC}"
+    echo -e "${GREEN}========================================${NC}"
+    echo "Testing process counts: ${PROCESS_SWEEP}"
+    echo "Streams: ${NUM_STREAMS}"
+    echo "Device: ${DEVICE}"
+    echo "Batch Size: ${BATCH_SIZE}"
+    echo "Duration: ${DURATION}s"
+    echo "Model Precision: $([ "${USE_INT8}" = true ] && echo "INT8" || echo "FP32")"
+    echo ""
+    
+    # Parse process counts
+    IFS=',' read -ra PROCESS_COUNTS <<< "${PROCESS_SWEEP}"
+    
+    # Create sweep results directory
+    SWEEP_TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    SWEEP_PRECISION=$([ "${USE_INT8}" = true ] && echo "int8" || echo "fp32")
+    SWEEP_DIR="./process_sweep_${NUM_STREAMS}streams_bs${BATCH_SIZE}_${SWEEP_PRECISION}_${SWEEP_TIMESTAMP}"
+    mkdir -p "${SWEEP_DIR}"
+    
+    SWEEP_SUMMARY="${SWEEP_DIR}/sweep_summary.txt"
+    
+    # Write sweep header
+    {
+        echo "======================================"
+        echo "Process Sweep Test Summary"
+        echo "======================================"
+        echo "Timestamp: ${SWEEP_TIMESTAMP}"
+        echo "Total Streams: ${NUM_STREAMS}"
+        echo "Device: ${DEVICE}"
+        echo "Batch Size: ${BATCH_SIZE}"
+        echo "Duration: ${DURATION}s per test"
+        echo "Model Precision: ${SWEEP_PRECISION}"
+        echo "Process Counts Tested: ${PROCESS_SWEEP}"
+        echo ""
+        echo "======================================"
+        echo "Individual Test Results"
+        echo "======================================"
+        echo ""
+    } > "${SWEEP_SUMMARY}"
+    
+    declare -a SWEEP_RESULTS
+    
+    # Run tests for each process count
+    for proc_count in "${PROCESS_COUNTS[@]}"; do
+        # Trim whitespace
+        proc_count=$(echo "${proc_count}" | xargs)
+        
+        if [[ ! "${proc_count}" =~ ^[0-9]+$ ]] || [[ ${proc_count} -lt 1 ]]; then
+            echo -e "${RED}[ERROR]${NC} Invalid process count: ${proc_count}"
+            continue
+        fi
+        
+        echo -e "${YELLOW}[SWEEP]${NC} Testing with ${proc_count} process(es)..."
+        echo ""
+        
+        # Build command arguments (exclude -P-sweep to avoid recursion)
+        TEST_ARGS="-n ${NUM_STREAMS} -P ${proc_count} -d ${DEVICE} -b ${BATCH_SIZE} -i ${DURATION}"
+        [[ "${ENABLE_AI}" == true ]] && TEST_ARGS="${TEST_ARGS} -a"
+        [[ "${USE_INT8}" == true ]] && TEST_ARGS="${TEST_ARGS} -int8"
+        [[ -n "${VIDEO_FILE}" ]] && TEST_ARGS="${TEST_ARGS} -v ${VIDEO_FILE}"
+        [[ -n "${MODEL_OVERRIDE}" ]] && TEST_ARGS="${TEST_ARGS} -m ${MODEL_OVERRIDE}"
+        [[ -n "${PYTHON_MODULE}" ]] && TEST_ARGS="${TEST_ARGS} -p ${PYTHON_MODULE}"
+        [[ -n "${MQTT_ADDRESS}" ]] && TEST_ARGS="${TEST_ARGS} -q ${MQTT_ADDRESS}"
+        
+        # Run the test (call script recursively without -P-sweep)
+        if bash "$0" ${TEST_ARGS} 2>&1 | tee "${SWEEP_DIR}/test_${proc_count}proc.log"; then
+            # Extract throughput per stream from the last line of output
+            RESULT_FPS=$(tail -n 1 "${SWEEP_DIR}/test_${proc_count}proc.log")
+            
+            if [[ "${RESULT_FPS}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+                TOTAL_FPS=$(LC_ALL=C awk -v fps="${RESULT_FPS}" -v streams="${NUM_STREAMS}" \
+                    'BEGIN { printf("%.2f", fps * streams) }')
+                
+                SWEEP_RESULTS+=("${proc_count}:${RESULT_FPS}:${TOTAL_FPS}")
+                
+                echo ""
+                echo -e "${GREEN}[SWEEP]${NC} Result: ${proc_count} proc -> ${RESULT_FPS} fps/stream (Total: ${TOTAL_FPS} fps)"
+                
+                # Append to summary
+                {
+                    echo "Process Count: ${proc_count}"
+                    echo "  FPS per Stream: ${RESULT_FPS}"
+                    echo "  Total Throughput: ${TOTAL_FPS} fps"
+                    echo ""
+                } >> "${SWEEP_SUMMARY}"
+            else
+                echo -e "${RED}[SWEEP]${NC} Failed to get valid result for ${proc_count} process(es)"
+                {
+                    echo "Process Count: ${proc_count}"
+                    echo "  Status: FAILED"
+                    echo ""
+                } >> "${SWEEP_SUMMARY}"
+            fi
+        else
+            echo -e "${RED}[SWEEP]${NC} Test failed for ${proc_count} process(es)"
+            {
+                echo "Process Count: ${proc_count}"
+                echo "  Status: ERROR"
+                echo ""
+            } >> "${SWEEP_SUMMARY}"
+        fi
+        
+        echo ""
+        echo -e "${YELLOW}[SWEEP]${NC} Waiting 5 seconds before next test..."
+        sleep 5
+    done
+    
+    # Write comparison summary
+    {
+        echo "======================================"
+        echo "Comparison Summary"
+        echo "======================================"
+        printf "%-12s %-18s %-18s\n" "Processes" "FPS/Stream" "Total FPS"
+        echo "--------------------------------------"
+    } >> "${SWEEP_SUMMARY}"
+    
+    # Find best result
+    BEST_FPS=0
+    BEST_PROC=0
+    
+    for result in "${SWEEP_RESULTS[@]}"; do
+        IFS=':' read -r proc fps total <<< "${result}"
+        printf "%-12s %-18s %-18s\n" "${proc}" "${fps}" "${total}" >> "${SWEEP_SUMMARY}"
+        
+        # Check if this is the best
+        IS_BEST=$(LC_ALL=C awk -v total="${total}" -v best="${BEST_FPS}" \
+            'BEGIN { print (total > best) ? 1 : 0 }')
+        if [[ ${IS_BEST} -eq 1 ]]; then
+            BEST_FPS="${total}"
+            BEST_PROC="${proc}"
+        fi
+    done
+    
+    {
+        echo ""
+        echo "Best Configuration:"
+        echo "  Process Count: ${BEST_PROC}"
+        echo "  Total Throughput: ${BEST_FPS} fps"
+        echo ""
+        echo "Results saved to: ${SWEEP_DIR}"
+        echo ""
+    } >> "${SWEEP_SUMMARY}"
+    
+    # Display summary
+    echo ""
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}Process Sweep Complete${NC}"
+    echo -e "${GREEN}========================================${NC}"
+    cat "${SWEEP_SUMMARY}"
+    
+    exit 0
+fi
+
 # Auto-tune mode function
 run_auto_tune() {
     local current_streams=$NUM_STREAMS
@@ -301,12 +464,12 @@ run_auto_tune() {
             'BEGIN { print (fps >= threshold) ? 1 : 0 }')
         
         if [[ $passed -eq 1 ]]; then
-            echo -e "${GREEN}[TUNE]${NC} ✓ Passed threshold"
+            echo -e "${GREEN}[TUNE]${NC} + Passed threshold"
             max_streams=$current_streams
             max_streams_fps=$result_fps
             current_streams=$((current_streams + step_size))
         else
-            echo -e "${RED}[TUNE]${NC} ✗ Failed threshold"
+            echo -e "${RED}[TUNE]${NC} X Failed threshold"
             
             if [[ $step_size -gt 2 ]]; then
                 step_size=2
@@ -349,7 +512,12 @@ fi
 
 # Results directory
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-RESULTS_DIR="./benchmark_results_${NUM_STREAMS}streams_${NUM_PROCESSES}proc_bs${BATCH_SIZE}_${TIMESTAMP}"
+if [[ "${USE_INT8}" == true ]]; then
+    PRECISION="int8"
+else
+    PRECISION="fp32"
+fi
+RESULTS_DIR="./benchmark_results_${NUM_STREAMS}streams_${NUM_PROCESSES}proc_bs${BATCH_SIZE}_${PRECISION}_${TIMESTAMP}"
 mkdir -p "${RESULTS_DIR}"
 
 LOG_FILE="${RESULTS_DIR}/benchmark.log"
@@ -680,7 +848,7 @@ if [[ -f "${LOG_FILE}" ]]; then
                 PROC_RUNTIME=$(grep 'FpsCounter' "${PROC_LOG}" | grep 'average' | tail -n1 | sed -n 's/.*average \([0-9.]*\)sec.*/\1/p')
                 
                 if [[ -z "${PROC_RUNTIME}" ]]; then
-                    echo -e "${RED}  ✗ Process ${proc_id}: No FPS data found${NC}"
+                    echo -e "${RED}  X Process ${proc_id}: No FPS data found${NC}"
                     FAILED_PROCESSES+=("${proc_id}")
                 else
                     # Check if runtime meets minimum threshold
@@ -688,14 +856,14 @@ if [[ -f "${LOG_FILE}" ]]; then
                         'BEGIN { print (r >= m) ? 1 : 0 }')
                     
                     if [[ ${RUNTIME_OK} -eq 0 ]]; then
-                        echo -e "${RED}  ✗ Process ${proc_id}: Terminated early (${PROC_RUNTIME}s / ${DURATION}s expected)${NC}"
+                        echo -e "${RED}  X Process ${proc_id}: Terminated early (${PROC_RUNTIME}s / ${DURATION}s expected)${NC}"
                         FAILED_PROCESSES+=("${proc_id}")
                     else
-                        echo -e "${GREEN}  ✓ Process ${proc_id}: Completed (${PROC_RUNTIME}s)${NC}"
+                        echo -e "${GREEN}  + Process ${proc_id}: Completed (${PROC_RUNTIME}s)${NC}"
                     fi
                 fi
             else
-                echo -e "${RED}  ✗ Process ${proc_id}: Log file not found${NC}"
+                echo -e "${RED}  X Process ${proc_id}: Log file not found${NC}"
                 FAILED_PROCESSES+=("${proc_id}")
             fi
         done
@@ -783,7 +951,7 @@ if [[ -f "${LOG_FILE}" ]]; then
             exit 1
         fi
         
-        echo -e "${GREEN}  ✓ Process completed (${PROC_RUNTIME}s)${NC}"
+        echo -e "${GREEN}  + Process completed (${PROC_RUNTIME}s)${NC}"
         echo ""
         
         THROUGHPUT=$(grep 'FpsCounter' "${LOG_FILE}" | grep 'average' | tail -n1 | sed 's/.*total=//' | cut -d' ' -f1)
