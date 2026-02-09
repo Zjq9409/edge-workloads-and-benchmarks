@@ -60,6 +60,50 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+# Check and stop any existing benchmark containers
+cleanup_existing_benchmark_containers() {
+    echo -e "${YELLOW}[INFO]${NC} Checking for existing benchmark containers..."
+    
+    # Find all benchmark_* containers (both running and stopped)
+    local benchmark_containers=$(docker ps -a --filter "name=^benchmark_" --format "{{.Names}}" 2>/dev/null)
+    
+    if [[ -z "${benchmark_containers}" ]]; then
+        echo -e "${GREEN}[INFO]${NC} No existing benchmark containers found"
+        return 0
+    fi
+    
+    # Count containers
+    local count=$(echo "${benchmark_containers}" | wc -l)
+    echo -e "${YELLOW}[WARNING]${NC} Found ${count} existing benchmark container(s)"
+    
+    # Show container details
+    echo -e "${YELLOW}[INFO]${NC} Container details:"
+    docker ps -a --filter "name=^benchmark_" --format "table {{.Names}}\t{{.Status}}\t{{.CreatedAt}}" | head -6
+    
+    # Stop and remove containers
+    echo -e "${YELLOW}[INFO]${NC} Stopping and removing benchmark containers..."
+    for container in ${benchmark_containers}; do
+        echo -e "${YELLOW}[INFO]${NC}   Stopping ${container}..."
+        if docker stop -t 2 "${container}" >/dev/null 2>&1; then
+            echo -e "${GREEN}[INFO]${NC}     Stopped ${container}"
+        fi
+        if docker rm "${container}" >/dev/null 2>&1; then
+            echo -e "${GREEN}[INFO]${NC}     Removed ${container}"
+        fi
+    done
+    
+    # Verify cleanup
+    local remaining=$(docker ps -a --filter "name=^benchmark_" --format "{{.Names}}" 2>/dev/null | wc -l)
+    
+    if [[ ${remaining} -eq 0 ]]; then
+        echo -e "${GREEN}[INFO]${NC} All benchmark containers cleaned up successfully"
+        return 0
+    else
+        echo -e "${YELLOW}[WARNING]${NC} ${remaining} container(s) still remaining"
+        return 1
+    fi
+}
+
 # Check and start MQTT broker if needed
 ensure_mqtt_broker() {
     local mqtt_container="dlstreamer_mqtt"
@@ -314,6 +358,10 @@ MONITOR_CSV="${RESULTS_DIR}/gpu_monitor.csv"
 
 # GPU monitor script path
 GPU_MONITOR_SCRIPT="../../../utils/gpu_monitor.sh"
+
+# Clean up any existing benchmark containers before starting
+cleanup_existing_benchmark_containers
+echo ""
 
 # Ensure MQTT broker is running if AI is enabled
 if [[ "${ENABLE_AI}" == true ]]; then
