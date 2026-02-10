@@ -10,6 +10,25 @@ mediadir="${basedir}/media"
 pipedir="${basedir}/../pipelines"
 mkdir -p "${mediadir}/mp4" "${mediadir}/hevc"
 
+# Auto-detect Ubuntu version and select appropriate Docker image
+if [[ -f /etc/os-release ]]; then
+    . /etc/os-release
+    if [[ "${VERSION_ID}" == "22.04" ]]; then
+        DLSTREAMER_IMAGE="intel/dlstreamer:2025.2.0-ubuntu22"
+        echo "[ Info ] Detected Ubuntu 22.04, using image: ${DLSTREAMER_IMAGE}"
+    elif [[ "${VERSION_ID}" == "24.04" ]]; then
+        DLSTREAMER_IMAGE="intel/dlstreamer:2025.2.0-ubuntu24"
+        echo "[ Info ] Detected Ubuntu 24.04, using image: ${DLSTREAMER_IMAGE}"
+    else
+        echo "[ Error ] Unsupported Ubuntu version: ${VERSION_ID}"
+        echo "[ Info ] Supported versions: 22.04, 24.04"
+        exit 1
+    fi
+else
+    echo "[ Error ] Cannot detect OS version (/etc/os-release not found)"
+    exit 1
+fi
+
 ONE_OBJ_VIDEO_URL="https://videos.pexels.com/video-files/6891009/6891009-uhd_3840_2160_30fps.mp4"
 TWO_OBJ_VIDEO_URL="https://videos.pexels.com/video-files/18856748/18856748-uhd_3840_2160_60fps.mp4"
 
@@ -57,7 +76,7 @@ else
     exit 1
 fi
 
-docker_args+=(intel/dlstreamer:latest)
+docker_args+=(${DLSTREAMER_IMAGE})
 
 transcode_to_h265() {
     local in="$1" out="$2" width="${3:-1920}" height="${4:-1080}" fps="${5:-30}"
