@@ -13,6 +13,8 @@ runs/
 # Ignore all benchmark_results* directories anywhere
 **/benchmark_results*/
 **/decode_results*/
+**/process_sweep*/
+**/decode_process_sweep*/
 
 media-downloader/*.h265
 zto/.cache/*
