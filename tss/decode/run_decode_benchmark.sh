@@ -40,9 +40,10 @@ TARGET_FPS=25
 NUM_STREAMS=1
 NUM_PROCESSES=1
 USER_SET_PROCESSES=false
+PROCESS_SWEEP=""
 DEVICE="GPU.0"
 VIDEO_FILE="/home/dlstreamer/work/media-downloader/media/hevc/apple_720p25_loop30.h265"
-#VIDEO_FILE="/home/dlstreamer/work/media-downloader/media/h264/1280x720_25fps.h264"
+# VIDEO_FILE="/home/dlstreamer/work/media-downloader/media/h264/1280x720_25fps.h264"
 AUTO_TUNE=false
 TUNE_THRESHOLD=25.0
 TUNE_SHORT_DURATION=30
@@ -52,6 +53,50 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
+
+# Check and stop any existing decode benchmark containers
+cleanup_existing_decode_containers() {
+    echo -e "${YELLOW}[INFO]${NC} Checking for existing decode benchmark containers..."
+    
+    # Find all decode_benchmark_* containers (both running and stopped)
+    local decode_containers=$(docker ps -a --filter "name=^decode_benchmark_" --format "{{.Names}}" 2>/dev/null)
+    
+    if [[ -z "${decode_containers}" ]]; then
+        echo -e "${GREEN}[INFO]${NC} No existing decode benchmark containers found"
+        return 0
+    fi
+    
+    # Count containers
+    local count=$(echo "${decode_containers}" | wc -l)
+    echo -e "${YELLOW}[WARNING]${NC} Found ${count} existing decode benchmark container(s)"
+    
+    # Show container details
+    echo -e "${YELLOW}[INFO]${NC} Container details:"
+    docker ps -a --filter "name=^decode_benchmark_" --format "table {{.Names}}\t{{.Status}}\t{{.CreatedAt}}" | head -6
+    
+    # Stop and remove containers
+    echo -e "${YELLOW}[INFO]${NC} Stopping and removing decode benchmark containers..."
+    for container in ${decode_containers}; do
+        echo -e "${YELLOW}[INFO]${NC}   Stopping ${container}..."
+        if docker stop -t 2 "${container}" >/dev/null 2>&1; then
+            echo -e "${GREEN}[INFO]${NC}     Stopped ${container}"
+        fi
+        if docker rm "${container}" >/dev/null 2>&1; then
+            echo -e "${GREEN}[INFO]${NC}     Removed ${container}"
+        fi
+    done
+    
+    # Verify cleanup
+    local remaining=$(docker ps -a --filter "name=^decode_benchmark_" --format "{{.Names}}" 2>/dev/null | wc -l)
+    
+    if [[ ${remaining} -eq 0 ]]; then
+        echo -e "${GREEN}[INFO]${NC} All decode benchmark containers cleaned up successfully"
+        return 0
+    else
+        echo -e "${YELLOW}[WARNING]${NC} ${remaining} container(s) still remaining"
+        return 1
+    fi
+}
 
 # Usage
 usage() {
@@ -64,6 +109,7 @@ Common options:
   -v <video>         Video file path (.h264, .h265, .mp4)
   -n <num_streams>   Number of decode streams (default: 1)
   -P <num_processes> Number of processes (default: 1)
+  -P-sweep <list>    Test multiple process counts (e.g., "1,2,4,8")
   -d <device>        GPU device: GPU.0-GPU.3 (default: GPU.0)
   -i <duration>      Test duration in seconds (default: 120)
   -T                 Enable auto-tune mode
@@ -72,6 +118,7 @@ Common options:
 Examples:
   ./run_decode_benchmark.sh -n 200 -P 4 -d GPU.0 -i 120
   ./run_decode_benchmark.sh -n 200 -d GPU.0 -T
+  ./run_decode_benchmark.sh -n 200 -P-sweep "1,2,4,8" -d GPU.0 -i 120
 
 For detailed documentation, see: README.md
 
@@ -81,19 +128,30 @@ EOF
 
 # Parse arguments
 GPU_CARD=""
-while getopts "v:n:P:d:g:i:t:s:Th" opt; do
-    case $opt in
-        v) VIDEO_FILE="$OPTARG" ;;
-        n) NUM_STREAMS="$OPTARG" ;;
-        P) NUM_PROCESSES="$OPTARG"; USER_SET_PROCESSES=true ;;
-        d) DEVICE="$OPTARG" ;;
-        g) GPU_CARD="$OPTARG" ;;
-        i) DURATION="$OPTARG" ;;
-        t) TARGET_FPS="$OPTARG" ;;
-        T) AUTO_TUNE=true ;;
-        s) TUNE_THRESHOLD="$OPTARG" ;;
-        h) usage ;;
-        *) usage ;;
+shift_count=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -v) VIDEO_FILE="$2"; shift 2 ;;
+        -n) NUM_STREAMS="$2"; shift 2 ;;
+        -P) 
+            if [[ "$1" == "-P-sweep" ]]; then
+                PROCESS_SWEEP="$2"
+                shift 2
+            else
+                NUM_PROCESSES="$2"
+                USER_SET_PROCESSES=true
+                shift 2
+            fi
+            ;;
+        -P-sweep) PROCESS_SWEEP="$2"; shift 2 ;;
+        -d) DEVICE="$2"; shift 2 ;;
+        -g) GPU_CARD="$2"; shift 2 ;;
+        -i) DURATION="$2"; shift 2 ;;
+        -t) TARGET_FPS="$2"; shift 2 ;;
+        -s) TUNE_THRESHOLD="$2"; shift 2 ;;
+        -T) AUTO_TUNE=true; shift ;;
+        -h) usage ;;
+        *) echo "Unknown option: $1"; usage ;;
     esac
 done
 
@@ -330,6 +388,190 @@ run_auto_tune() {
     exit 0
 }
 
+# Detect video codec early for directory naming and pipeline configuration
+VIDEO_LOWER=$(echo "${VIDEO_FILE}" | tr '[:upper:]' '[:lower:]')
+if [[ "${VIDEO_LOWER}" =~ \.h264$ ]]; then
+    PARSER="h264parse"
+    DECODER="vah264dec"
+    CODEC="H.264"
+    CODEC_SHORT="h264"
+elif [[ "${VIDEO_LOWER}" =~ \.h265$ ]]; then
+    PARSER="h265parse"
+    DECODER="vah265dec"
+    CODEC="H.265"
+    CODEC_SHORT="h265"
+elif [[ "${VIDEO_LOWER}" =~ \.mp4$ ]]; then
+    # For MP4, we'll use qtdemux and need to check codec inside container
+    PARSER="qtdemux ! h265parse"  # Assume H.265 by default for MP4
+    DECODER="vah265dec"
+    CODEC="MP4 (H.265)"
+    CODEC_SHORT="mp4"
+else
+    echo -e "${RED}[ERROR]${NC} Unsupported video format: ${VIDEO_FILE}"
+    echo "Supported formats: .h264, .h265, .mp4"
+    exit 1
+fi
+
+# Process sweep mode - test multiple process counts
+if [[ -n "${PROCESS_SWEEP}" ]]; then
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}Process Sweep Mode (Decode)${NC}"
+    echo -e "${GREEN}========================================${NC}"
+    echo "Testing process counts: ${PROCESS_SWEEP}"
+    echo "Streams: ${NUM_STREAMS}"
+    echo "Device: ${DEVICE}"
+    echo "Video: ${VIDEO_FILE}"
+    echo "Codec: ${CODEC_SHORT}"
+    echo "Duration: ${DURATION}s"
+    echo ""
+    
+    # Parse process counts
+    IFS=',' read -ra PROCESS_COUNTS <<< "${PROCESS_SWEEP}"
+    
+    # Create sweep results directory
+    SWEEP_TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    SWEEP_DIR="./decode_process_sweep_${NUM_STREAMS}streams_${CODEC_SHORT}_${SWEEP_TIMESTAMP}"
+    mkdir -p "${SWEEP_DIR}"
+    
+    SWEEP_SUMMARY="${SWEEP_DIR}/sweep_summary.txt"
+    
+    # Write sweep header
+    {
+        echo "======================================"
+        echo "Decode Process Sweep Test Summary"
+        echo "======================================"
+        echo "Timestamp: ${SWEEP_TIMESTAMP}"
+        echo "Total Streams: ${NUM_STREAMS}"
+        echo "Device: ${DEVICE}"
+        echo "Video: ${VIDEO_FILE}"
+        echo "Duration: ${DURATION}s per test"
+        echo "Process Counts Tested: ${PROCESS_SWEEP}"
+        echo ""
+        echo "======================================"
+        echo "Individual Test Results"
+        echo "======================================"
+        echo ""
+    } > "${SWEEP_SUMMARY}"
+    
+    declare -a SWEEP_RESULTS
+    
+    # Run tests for each process count
+    for proc_count in "${PROCESS_COUNTS[@]}"; do
+        # Trim whitespace
+        proc_count=$(echo "${proc_count}" | xargs)
+        
+        if [[ ! "${proc_count}" =~ ^[0-9]+$ ]] || [[ ${proc_count} -lt 1 ]]; then
+            echo -e "${RED}[ERROR]${NC} Invalid process count: ${proc_count}"
+            continue
+        fi
+        
+        echo -e "${YELLOW}[SWEEP]${NC} Testing with ${proc_count} process(es)..."
+        echo ""
+        
+        # Build command arguments (exclude -P-sweep to avoid recursion)
+        TEST_ARGS="-v ${VIDEO_FILE} -n ${NUM_STREAMS} -P ${proc_count} -d ${DEVICE} -i ${DURATION}"
+        [[ -n "${GPU_CARD}" ]] && TEST_ARGS="${TEST_ARGS} -g ${GPU_CARD}"
+        [[ -n "${TARGET_FPS}" ]] && TEST_ARGS="${TEST_ARGS} -t ${TARGET_FPS}"
+        
+        # Run the test (call script recursively without -P-sweep)
+        if bash "$0" ${TEST_ARGS} 2>&1 | tee "${SWEEP_DIR}/test_${proc_count}proc.log"; then
+            # Find the most recent decode_results directory
+            RESULT_DIR=$(ls -td decode_results_${NUM_STREAMS}streams_${proc_count}proc_* 2>/dev/null | head -1)
+            
+            if [[ -n "${RESULT_DIR}" && -f "${RESULT_DIR}/summary.txt" ]]; then
+                # Extract metrics
+                PER_STREAM_FPS=$(grep "Per-Stream Average:" "${RESULT_DIR}/summary.txt" | grep -oP '\K[0-9.]+(?= fps/stream)')
+                TOTAL_FPS=$(grep "Total Decode Throughput:" "${RESULT_DIR}/summary.txt" | grep -oP '\K[0-9.]+(?= fps)')
+                
+                if [[ -n "${PER_STREAM_FPS}" && -n "${TOTAL_FPS}" ]]; then
+                    SWEEP_RESULTS+=("${proc_count}:${PER_STREAM_FPS}:${TOTAL_FPS}")
+                    
+                    echo ""
+                    echo -e "${GREEN}[SWEEP]${NC} Result: ${proc_count} proc -> ${PER_STREAM_FPS} fps/stream (Total: ${TOTAL_FPS} fps)"
+                    
+                    # Append to summary
+                    {
+                        echo "Process Count: ${proc_count}"
+                        echo "  FPS per Stream: ${PER_STREAM_FPS}"
+                        echo "  Total Throughput: ${TOTAL_FPS} fps"
+                        echo ""
+                    } >> "${SWEEP_SUMMARY}"
+                else
+                    echo -e "${RED}[SWEEP]${NC} Failed to parse results for ${proc_count} process(es)"
+                    {
+                        echo "Process Count: ${proc_count}"
+                        echo "  Status: PARSE_FAILED"
+                        echo ""
+                    } >> "${SWEEP_SUMMARY}"
+                fi
+            else
+                echo -e "${RED}[SWEEP]${NC} Results not found for ${proc_count} process(es)"
+                {
+                    echo "Process Count: ${proc_count}"
+                    echo "  Status: RESULTS_NOT_FOUND"
+                    echo ""
+                } >> "${SWEEP_SUMMARY}"
+            fi
+        else
+            echo -e "${RED}[SWEEP]${NC} Test failed for ${proc_count} process(es)"
+            {
+                echo "Process Count: ${proc_count}"
+                echo "  Status: TEST_FAILED"
+                echo ""
+            } >> "${SWEEP_SUMMARY}"
+        fi
+        
+        echo ""
+        echo -e "${YELLOW}[SWEEP]${NC} Waiting 5 seconds before next test..."
+        sleep 5
+    done
+    
+    # Write comparison summary
+    {
+        echo "======================================"
+        echo "Comparison Summary"
+        echo "======================================"
+        printf "%-12s %-18s %-18s\n" "Processes" "FPS/Stream" "Total FPS"
+        echo "--------------------------------------"
+    } >> "${SWEEP_SUMMARY}"
+    
+    # Find best result
+    BEST_FPS=0
+    BEST_PROC=0
+    
+    for result in "${SWEEP_RESULTS[@]}"; do
+        IFS=':' read -r proc fps total <<< "${result}"
+        printf "%-12s %-18s %-18s\n" "${proc}" "${fps}" "${total}" >> "${SWEEP_SUMMARY}"
+        
+        # Check if this is the best
+        IS_BEST=$(LC_ALL=C awk -v total="${total}" -v best="${BEST_FPS}" \
+            'BEGIN { print (total > best) ? 1 : 0 }')
+        if [[ ${IS_BEST} -eq 1 ]]; then
+            BEST_FPS="${total}"
+            BEST_PROC="${proc}"
+        fi
+    done
+    
+    {
+        echo ""
+        echo "Best Configuration:"
+        echo "  Process Count: ${BEST_PROC}"
+        echo "  Total Throughput: ${BEST_FPS} fps"
+        echo ""
+        echo "Results saved to: ${SWEEP_DIR}"
+        echo ""
+    } >> "${SWEEP_SUMMARY}"
+    
+    # Display summary
+    echo ""
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}Decode Process Sweep Complete${NC}"
+    echo -e "${GREEN}========================================${NC}"
+    cat "${SWEEP_SUMMARY}"
+    
+    exit 0
+fi
+
 # Check if auto-tune mode is enabled
 if [[ "${AUTO_TUNE}" == true ]]; then
     # In auto-tune mode, video file is optional (use default)
@@ -345,7 +587,7 @@ fi
 
 # Results directory
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-RESULTS_DIR="./decode_results_${NUM_STREAMS}streams_${NUM_PROCESSES}proc_${TIMESTAMP}"
+RESULTS_DIR="./decode_results_${NUM_STREAMS}streams_${NUM_PROCESSES}proc_${CODEC_SHORT}_${TIMESTAMP}"
 mkdir -p "${RESULTS_DIR}"
 
 LOG_FILE="${RESULTS_DIR}/benchmark.log"
@@ -409,6 +651,10 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
+# Clean up any existing decode benchmark containers before starting
+cleanup_existing_decode_containers
+echo ""
+
 # Start container
 echo -e "${YELLOW}[INFO]${NC} Creating container: ${CONTAINER_NAME}"
 docker run -d \
@@ -422,31 +668,13 @@ docker run -d \
 echo -e "${YELLOW}[INFO]${NC} Container created successfully"
 echo ""
 
-# Detect video codec from file extension
-VIDEO_LOWER=$(echo "${VIDEO_FILE}" | tr '[:upper:]' '[:lower:]')
-if [[ "${VIDEO_LOWER}" =~ \.h264$ ]]; then
-    PARSER="h264parse"
-    DECODER="vah264dec"
-    CODEC="H.264"
-elif [[ "${VIDEO_LOWER}" =~ \.h265$ ]]; then
-    PARSER="h265parse"
-    DECODER="vah265dec"
-    CODEC="H.265"
-elif [[ "${VIDEO_LOWER}" =~ \.mp4$ ]]; then
-    # For MP4, we'll use qtdemux and need to check codec inside container
-    PARSER="qtdemux ! h265parse"  # Assume H.265 by default for MP4
-    DECODER="vah265dec"
-    CODEC="MP4 (H.265)"
-    echo -e "${YELLOW}[WARNING]${NC} MP4 detected, assuming H.265 codec"
-else
-    echo -e "${RED}[ERROR]${NC} Unsupported video format: ${VIDEO_FILE}"
-    echo "Supported formats: .h264, .h265, .mp4"
-    exit 1
-fi
-
+# Codec information already detected above
 echo "Detected codec: ${CODEC}"
 echo "Using parser: ${PARSER}"
 echo "Using decoder: ${DECODER}"
+if [[ "${CODEC}" == "MP4 (H.265)" ]]; then
+    echo -e "${YELLOW}[WARNING]${NC} MP4 detected, assuming H.265 codec"
+fi
 echo ""
 
 # Build decode-only pipeline
