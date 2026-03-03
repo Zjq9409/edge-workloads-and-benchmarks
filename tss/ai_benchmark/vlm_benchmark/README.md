@@ -1,15 +1,15 @@
 # OpenVINO VLM Model Benchmark
 
-Benchmark OpenVINO VLM models using Intel's OpenVINI genai package.
+Benchmark VLM models using Intel's OpenVINI genai package or vLLM
 
 ## Overview
 
-This benchmark tests OpenVINO VLM model inference performance
+This benchmark tests VLM model inference performance
 
-## Usage
+## OV Usage
 
 ```
-python3 benchmark_vlm.py [OPTIONS]
+python3 benchmark_ov_vl.py [OPTIONS]
 ```
 
 ### Options
@@ -19,14 +19,33 @@ python3 benchmark_vlm.py [OPTIONS]
 | `-m <model>` | Model path<br>Example: /home/intel/models/Qwen2.5-VL-3B-Instruct | required |
 | `-p <prompt>` | Prompt input | if not fill, default is 'What is on the image?' |
 | `-pf <prompt file>` | Prompt file | profile file path |
-| `-i <image>` | Image input | image file path |
+| `-i <image/video>` | Image/Video input | image/video file path |
 | `-d <device>` | GPU device: GPU.0, GPU.1 | GPU.0 |
 | `-nw <num warmup>` | Num of warm-up iteration | default is 1 |
 | `-n <num iteration>` | Num of perf run iteration | - |
 | `-mt` | Max new tokens | - |
 | `-h` | Show help message | - |
 
-## Examples
+## vLLM Usage
+
+```
+python3 benchmark_vllm_vl.py [OPTIONS]
+```
+
+### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-m <model>` | Model path<br>Example: /home/intel/models/Qwen2.5-VL-3B-Instruct | required |
+| `-p <prompt>` | Prompt input | if not fill, default is 'What is on the image?' |
+| `-i <image/video>` | Image/Video input | image/video file path |
+| `-n <num iteration>` | Num of perf run iteration | - |
+| `-mt` | Max new tokens | - |
+| `--host` | vLLM API service address | default is localhost |
+| `--port` | vLLM API service port | default is 8000 |
+| `--timeout` | vLLM service request timeout | default is 120s |
+
+## OV Examples
 
 ### Prepare OpenVINO GenAI
 
@@ -56,7 +75,7 @@ Examples:
 python3 visual_language_chat.py /home/intel/models/Qwen2.5-VL-3B-Instruct/ test.jpg GPU
 ```
 
-## Output
+### Output
 
 ```
 question:
@@ -74,21 +93,21 @@ question:
 ```
 
 
-## Benchmark Model
+### Benchmark Model
 
 The benchmark uses OpenVINO's `benchmark_app` with the following settings:
 
 ```bash
-python3 benchmark_vlm.py \
+python3 benchmark_ov_vl.py \
   -m <model path> \
   -i <image file> \
   -d GPU.0 
 
 Examples:
-python3 benchmark_vlm.py -m /home/intel/models/Qwen2.5-VL-3B-Instruct/ -d GPU -i test.jpg
+python3 benchmark_ov_vl.py -m /home/intel/models/Qwen2.5-VL-3B-Instruct/ -d GPU -i test.jpg
 ```
 
-## Understanding Results
+### Understanding Results
 
 ```
 Number of images:1, Prompt token size: 6
@@ -104,6 +123,47 @@ Throughput : 45.81 ± 51.35 tokens/s
 ```
 perf number description: mean ± std
 
+## vLLM Examples
+
+### start up vLLM service
+
+```bash
+VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 \
+VLLM_WORKER_MULTIPROC_METHOD=spawn \
+vllm serve \
+    --model /root/home/leo/models/hf-models/Qwen2.5-VL-7B-Instruct \
+    --served-model-name Qwen2.5-VL-7B-Instruct \
+    --disable-mm-preprocessor-cache \
+    --allowed-local-media-path /llm/models/test \
+    --dtype=float16 \
+    --enforce-eager \
+    --port 8000 \
+    --host 0.0.0.0 \
+    --trust-remote-code \
+    --gpu-memory-util=0.9 \
+    --no-enable-prefix-caching \
+    --max-num-batched-tokens=5120 \
+    --disable-log-requests \
+    --max-model-len=5120 \
+    --block-size 64 \
+    --quantization fp8 \
+    -tp=1 \
+    2>&1 | tee /llm/vllm.log
+```
+
+### Benchmark Model
+
+The benchmark uses http API with the following settings:
+
+```bash
+python3 benchmark_vllm_vl.py \
+  -m <model path> \
+  -i <image file> \
+  -p <prompt> 
+
+Examples:
+python3 benchmark_vllm_vl.py -m /home/intel/models/Qwen2.5-VL-3B-Instruct/ -i test.jpg -p "what is this?"
+```
 
 ## System Requirements
 

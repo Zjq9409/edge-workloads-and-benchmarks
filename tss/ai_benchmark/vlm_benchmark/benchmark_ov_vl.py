@@ -10,7 +10,8 @@ from openvino import Tensor
 from pathlib import Path
 import numpy as np
 from openvino import get_version
-
+import cv2
+import time
 
 def read_image(path: str) -> Tensor:
     '''
@@ -31,6 +32,41 @@ def read_images(path: str) -> list[Tensor]:
         return [read_image(str(file)) for file in sorted(entry.iterdir())]
     return [read_image(path)]
 
+def read_video(path: str, num_frames: int = 8) -> Tensor:
+    """
+
+    Args:
+        path: The path to the video.
+        num_frames: Number of frames sampled from the video.
+
+    Returns: the ov.Tensor containing the video.
+
+    """
+    cap = cv2.VideoCapture(path)
+
+    frames = []
+    total_num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    indices = np.arange(0, total_num_frames, total_num_frames / num_frames).astype(int)
+
+    idx = 0
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        if idx in indices:
+            frames.append(np.array(frame))
+        idx += 1
+
+    cap.release()
+    assert idx == total_num_frames, "Frame count mismatch: expected {}, got {}".format(total_num_frames, idx)
+
+    return Tensor(frames)
+
+def read_videos(path: str) -> list[Tensor]:
+    entry = Path(path)
+    if entry.is_dir():
+        return [read_video(str(file)) for file in sorted(entry.iterdir())]
+    return [read_video(path)]
 
 def main():
     parser = argparse.ArgumentParser(description="Help command")
@@ -61,7 +97,13 @@ def main():
     # Perf metrics is stored in VLMDecodedResults.
     # In order to get VLMDecodedResults instead of a string input should be a list.
     models_path = args.model
-    images = read_images(args.image)
+    # check if it is video or image by extension, only support mp4, avi, mov for video
+    image_lower = args.image.lower()
+    isvideo = image_lower.endswith('.mp4') or image_lower.endswith('.avi') or image_lower.endswith('.mov')
+    if isvideo:
+        images = read_videos(args.image)
+    else:
+        images = read_images(args.image)
     device = args.device
     num_warmup = args.num_warmup
     num_iter = args.num_iter
@@ -83,13 +125,25 @@ def main():
     print(f"Number of images:{len(images)}, Prompt token size: {prompt_token_size}")
 
     for _ in range(num_warmup):
-        pipe.generate(prompt, images=images, generation_config=config)
+        if isvideo:
+            pipe.generate(prompt, videos=images, generation_config=config)
+        else:
+            pipe.generate(prompt, images=images, generation_config=config)
 
-    res = pipe.generate(prompt, images=images, generation_config=config)
+    if isvideo:
+        res = pipe.generate(prompt, videos=images, generation_config=config)
+    else:
+        res = pipe.generate(prompt, images=images, generation_config=config)
     perf_metrics = res.perf_metrics
     for _ in range(num_iter - 1):
-        res = pipe.generate(prompt, images=images, generation_config=config)
+        start_time = time.perf_counter()
+        if isvideo:
+            res = pipe.generate(prompt, videos=images, generation_config=config)
+        else:
+            res = pipe.generate(prompt, images=images, generation_config=config)
         perf_metrics += res.perf_metrics
+        end_time = time.perf_counter()
+        print(f"Iteration time: {(end_time - start_time) * 1000:.2f} ms")
 
     print(f"Output token size: {res.perf_metrics.get_num_generated_tokens()}")
     print(f"Load time: {perf_metrics.get_load_time():.2f} ms")

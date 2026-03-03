@@ -1,0 +1,106 @@
+diff --git a/docker/ubuntu/ubuntu24.Dockerfile b/docker/ubuntu/ubuntu24.Dockerfile
+index 32084ee..feb7a18 100644
+--- a/docker/ubuntu/ubuntu24.Dockerfile
++++ b/docker/ubuntu/ubuntu24.Dockerfile
+@@ -30,6 +30,11 @@
+ #                      V
+ #                  dlstreamer
+ # ==============================================================================
++# Proxy configuration
++ARG http_proxy=http://10.102.248.16:911
++ARG https_proxy=http://10.102.248.16:911
++ARG no_proxy=localhost,127.0.0.1
++
+ ARG DOCKER_REGISTRY
+ FROM ${DOCKER_REGISTRY}ubuntu:24.04 AS builder
+ 
+@@ -52,6 +57,14 @@ ENV LIBVA_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri
+ ENV LIBVA_DRIVER_NAME=iHD
+ ENV GST_VA_ALL_DRIVERS=1
+ 
++# Re-declare proxy ARGs
++ARG http_proxy
++ARG https_proxy
++ARG no_proxy
++ENV http_proxy=${http_proxy}
++ENV https_proxy=${https_proxy}
++ENV no_proxy=${no_proxy}
++
+ SHELL ["/bin/bash", "-xo", "pipefail", "-c"]
+ 
+ RUN userdel -r ubuntu
+@@ -67,12 +80,13 @@ RUN \
+     apt-get install -y --no-install-recommends software-properties-common=\* && \
+     add-apt-repository -y ppa:kobuk-team/intel-graphics && \
+     apt-get update && \
++    apt-get install -y --no-install-recommends \
++    libze-intel-gpu1=26.05.37020.3-1~24.04~ppa2 libze1=1.27.0-1~24.04~ppa1 intel-opencl-icd=26.05.37020.3-1~24.04~ppa2 && \
+     echo "Snapshot: 20251125T030400Z" >> /etc/apt/sources.list.d/kobuk-team-ubuntu-intel-graphics-noble.sources && \
+     apt-get update && \
+     apt-get install -y --no-install-recommends \
+     intel-metrics-discovery=\* intel-gsc=\* libvpl2=\* \
+-    libze-intel-gpu1=25.40.35563.7-1~24.04~ppa1 libze1=1.24.3-1~24.04~ppa1 intel-opencl-icd=25.40.35563.7-1~24.04~ppa1 clinfo=3.0.23.01.25-1build1 \
+-    intel-media-va-driver-non-free=25.4.2-1~24.04~ppa1 libmfx-gen1=25.4.0-0ubuntu1~24.04~ppa1 libvpl-tools=1.4.0-0ubuntu1~24.04~ppa1 libva-glx2=2.22.0-1ubuntu1~24.04~ppa1 va-driver-all=2.22.0-1ubuntu1~24.04~ppa1 vainfo=2.22.0-0ubuntu1~24.04~ppa1 && \
++    clinfo=3.0.23.01.25-1build1 intel-media-va-driver-non-free=25.4.2-1~24.04~ppa1 libmfx-gen1=25.4.0-0ubuntu1~24.04~ppa1 libvpl-tools=1.4.0-0ubuntu1~24.04~ppa1 libva-glx2=2.22.0-1ubuntu1~24.04~ppa1 va-driver-all=2.22.0-1ubuntu1~24.04~ppa1 vainfo=2.22.0-0ubuntu1~24.04~ppa1 && \
+     apt-get clean && \
+     rm -rf /var/lib/apt/lists/*
+ 
+@@ -501,6 +515,13 @@ ARG DLSTREAMER_VERSION
+ ARG DLSTREAMER_BUILD_NUMBER
+ # Build final image for dlstreamer - using .deb packages for installation
+ 
++ARG http_proxy
++ARG https_proxy
++ARG no_proxy
++ENV http_proxy=${http_proxy}
++ENV https_proxy=${https_proxy}
++ENV no_proxy=${no_proxy}
++
+ SHELL ["/bin/bash", "-xo", "pipefail", "-c"]
+ 
+ RUN userdel -r ubuntu
+@@ -508,7 +529,7 @@ RUN userdel -r ubuntu
+ # install prerequisites - gcc and cmake are needed to run .cpp samples
+ RUN \
+     apt-get update && \
+-    apt-get install -y -q --no-install-recommends curl=\* gpg=\* ca-certificates=\* libtbb12=\* git=\* python3-venv=\* jq=\* && \
++    apt-get install -y -q --no-install-recommends curl=\* gpg=\* ca-certificates=\* libtbb12=\* git=\* python3-venv=\* jq=\* vim=\* wget=\* && \
+     apt-get clean && \
+     rm -rf /var/lib/apt/lists/*
+ 
+@@ -519,12 +540,13 @@ RUN \
+     apt-get install -y --no-install-recommends software-properties-common=\* && \
+     add-apt-repository -y ppa:kobuk-team/intel-graphics && \
+     apt-get update && \
++    apt-get install -y --no-install-recommends \
++    libze-intel-gpu1=26.05.37020.3-1~24.04~ppa2 libze1=1.27.0-1~24.04~ppa1 intel-opencl-icd=26.05.37020.3-1~24.04~ppa2 && \
+     echo "Snapshot: 20251125T030400Z" >> /etc/apt/sources.list.d/kobuk-team-ubuntu-intel-graphics-noble.sources && \
+     apt-get update && \
+     apt-get install -y --no-install-recommends \
+     intel-metrics-discovery=\* intel-gsc=\* libvpl2=\* \
+-    libze-intel-gpu1=25.40.35563.7-1~24.04~ppa1 libze1=1.24.3-1~24.04~ppa1 intel-opencl-icd=25.40.35563.7-1~24.04~ppa1 clinfo=3.0.23.01.25-1build1 \
+-    intel-media-va-driver-non-free=25.4.2-1~24.04~ppa1 libmfx-gen1=25.4.0-0ubuntu1~24.04~ppa1 libvpl-tools=1.4.0-0ubuntu1~24.04~ppa1 libva-glx2=2.22.0-1ubuntu1~24.04~ppa1 va-driver-all=2.22.0-1ubuntu1~24.04~ppa1 vainfo=2.22.0-0ubuntu1~24.04~ppa1 && \
++    clinfo=3.0.23.01.25-1build1 intel-media-va-driver-non-free=25.4.2-1~24.04~ppa1 libmfx-gen1=25.4.0-0ubuntu1~24.04~ppa1 libvpl-tools=1.4.0-0ubuntu1~24.04~ppa1 libva-glx2=2.22.0-1ubuntu1~24.04~ppa1 va-driver-all=2.22.0-1ubuntu1~24.04~ppa1 vainfo=2.22.0-0ubuntu1~24.04~ppa1 && \
+     apt-get clean && \
+     rm -rf /var/lib/apt/lists/*
+ 
+@@ -559,11 +581,17 @@ RUN \
+     chown -R dlstreamer: /opt && \
+     chmod -R u+rw /opt
+ 
+-# Install onvif-zeep Python package
++# Install onvif-zeep and other Python packages, new added packages are for dev convinence.
+ RUN \
+     apt-get update && \
+     apt-get install -y -q --no-install-recommends python3-pip=\* && \
+-    pip3 install --no-cache-dir --break-system-packages onvif-zeep==0.2.12 && \
++    pip3 install --no-cache-dir --break-system-packages onvif-zeep==0.2.12 \
++    openvino-genai==2026.0.0 \
++    librosa==0.11.0 \
++    pillow==12.0.0 \
++    json5==0.13.0 \
++    opencv-python==4.11.0.86 \
++    optimum-intel[openvino] && \
+     cp -r /usr/local/lib/python3.12/site-packages/wsdl /usr/local/lib/python3.12/dist-packages/ && \
+     apt-get clean && \
+     rm -rf /var/lib/apt/lists/*
