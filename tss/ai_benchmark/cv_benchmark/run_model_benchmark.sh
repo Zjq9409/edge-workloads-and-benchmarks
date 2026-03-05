@@ -253,7 +253,7 @@ test_model() {
             
             # Run benchmark_app in container
             docker exec "${CONTAINER_NAME}" bash -c \
-                "benchmark_app -m ${model_path} --batch_size ${bs} -d ${DEVICE} -nireq 1 -hint none -shape [${bs},3,640,640]" \
+                "benchmark_app -m ${model_path} --batch_size ${bs} -d ${DEVICE}  -hint throughput -shape [${bs},3,640,640]" \
                 >> "${log_file}" 2>&1
             
             # Stop GPU monitoring (will auto-generate plots on exit)
@@ -309,7 +309,7 @@ test_model() {
                 # Run benchmark_app in background
                 (
                     docker exec "${CONTAINER_NAME}" bash -c \
-                        "benchmark_app -m ${model_path} --batch_size ${bs} -d ${DEVICE} -nireq 1 -hint none -shape [${bs},3,640,640]"
+                        "benchmark_app -m ${model_path} --batch_size ${bs} -d ${DEVICE} -hint throughput -shape [${bs},3,640,640]"
                 ) > "${process_log}" 2>&1 &
                 
                 pids+=($!)
