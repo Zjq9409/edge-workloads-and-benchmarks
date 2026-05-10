@@ -1,4 +1,4 @@
-openvino
+openvino==2025.4.0
 nncf
 numpy
 matplotlib

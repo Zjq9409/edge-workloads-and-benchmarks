@@ -66,8 +66,8 @@ validate_imagenet_root() {
 
 ensure_venv() {
     if [[ -d "${basedir}/venv" ]]; then
-        echo "[ Info ] Removing existing virtual environment at ${basedir}/venv"
-        rm -rf "${basedir}/venv"
+        echo "[ Info ] Using existing virtual environment at ${basedir}/venv"
+        return
     fi
     echo "[ Info ] Creating virtual environment..."
     "${basedir}/scripts/setup_env.sh"
@@ -93,18 +93,34 @@ echo ""
 # Classification models (ResNet-50, MobileNet-v2)
 if [[ -d "${IMAGENET_ROOT}" ]]; then
     validate_imagenet_root "${IMAGENET_ROOT}"
-    echo "[ Info ] Converting ResNet-50 with ImageNet calibration..."
-    python3 "${basedir}/download-models/resnet_downloader.py" -i="${IMAGENET_ROOT}"
+    if [[ -f "${modeldir}/resnet-50/resnet-50_int8.xml" && -f "${modeldir}/resnet-50/resnet-50_int8.bin" ]]; then
+        echo "[ Info ] Skipping ResNet-50 conversion (already exists)"
+    else
+        echo "[ Info ] Converting ResNet-50 with ImageNet calibration..."
+        python3 "${basedir}/download-models/resnet_downloader.py" -i="${IMAGENET_ROOT}"
+    fi
     echo ""
-    echo "[ Info ] Converting MobileNet-v2 with ImageNet calibration..."
-    python3 "${basedir}/download-models/mobilenet_downloader.py" -i="${IMAGENET_ROOT}"
+    if [[ -f "${modeldir}/mobilenet-v2/mobilenetv2_int8.xml" && -f "${modeldir}/mobilenet-v2/mobilenetv2_int8.bin" ]]; then
+        echo "[ Info ] Skipping MobileNet-v2 conversion (already exists)"
+    else
+        echo "[ Info ] Converting MobileNet-v2 with ImageNet calibration..."
+        python3 "${basedir}/download-models/mobilenet_downloader.py" -i="${IMAGENET_ROOT}"
+    fi
     echo ""
 else
-    echo "[ Info ] Converting ResNet-50 with CIFAR-100 calibration..."
-    python3 "${basedir}/download-models/resnet_downloader.py"
+    if [[ -f "${modeldir}/resnet-50/resnet-50_int8.xml" && -f "${modeldir}/resnet-50/resnet-50_int8.bin" ]]; then
+        echo "[ Info ] Skipping ResNet-50 conversion (already exists)"
+    else
+        echo "[ Info ] Converting ResNet-50 with CIFAR-100 calibration..."
+        python3 "${basedir}/download-models/resnet_downloader.py"
+    fi
     echo ""
-    echo "[ Info ] Converting MobileNet-v2 with CIFAR-100 calibration..."
-    python3 "${basedir}/download-models/mobilenet_downloader.py"
+    if [[ -f "${modeldir}/mobilenet-v2/mobilenetv2_int8.xml" && -f "${modeldir}/mobilenet-v2/mobilenetv2_int8.bin" ]]; then
+        echo "[ Info ] Skipping MobileNet-v2 conversion (already exists)"
+    else
+        echo "[ Info ] Converting MobileNet-v2 with CIFAR-100 calibration..."
+        python3 "${basedir}/download-models/mobilenet_downloader.py"
+    fi
     echo ""
 fi
 
@@ -112,25 +128,51 @@ fi
 echo "[ Info ] Initializing Ultralytics settings..."
 python3 "download-models/initialize_ultralytics.py" -i "${datasetdir}"
 echo ""
-echo "[ Info ] Converting YOLOv11n with COCO calibration..."
-python3 "download-models/yolo_downloader.py" -m yolo11n -i "${datasetdir}" -o "${modeldir}"
+if [[ -f "${modeldir}/yolo11n/yolo11n_int8.xml" && -f "${modeldir}/yolo11n/yolo11n_int8.bin" ]]; then
+    echo "[ Info ] Skipping YOLOv11n conversion (already exists)"
+else
+    echo "[ Info ] Converting YOLOv11n with COCO calibration..."
+    python3 "download-models/yolo_downloader.py" -m yolo11n -i "${datasetdir}" -o "${modeldir}"
+fi
 echo ""
-echo "[ Info ] Converting YOLOv11m with COCO calibration..."
-python3 "download-models/yolo_downloader.py" -m yolo11m -i "${datasetdir}" -o "${modeldir}"
+if [[ -f "${modeldir}/yolo11s/yolo11s_int8.xml" && -f "${modeldir}/yolo11s/yolo11s_int8.bin" ]]; then
+    echo "[ Info ] Skipping YOLOv11s conversion (already exists)"
+else
+    echo "[ Info ] Converting YOLOv11s with COCO calibration..."
+    python3 "download-models/yolo_downloader.py" -m yolo11s -i "${datasetdir}" -o "${modeldir}"
+fi
 echo ""
-echo "[ Info ] Converting YOLOv11m-pose with COCO calibration..."
-python3 "download-models/yolo_downloader.py" -m yolo11m-pose -i "${datasetdir}" -o "${modeldir}"
+if [[ -f "${modeldir}/yolo11m/yolo11m_int8.xml" && -f "${modeldir}/yolo11m/yolo11m_int8.bin" ]]; then
+    echo "[ Info ] Skipping YOLOv11m conversion (already exists)"
+else
+    echo "[ Info ] Converting YOLOv11m with COCO calibration..."
+    python3 "download-models/yolo_downloader.py" -m yolo11m -i "${datasetdir}" -o "${modeldir}"
+fi
 echo ""
-echo "[ Info ] Converting YOLOv8n-seg with COCO calibration..."
-python3 "download-models/yolo_downloader.py" -m yolov8n-seg -i "${datasetdir}" -o "${modeldir}"
+if [[ -f "${modeldir}/yolo11m-pose/yolo11m-pose_int8.xml" && -f "${modeldir}/yolo11m-pose/yolo11m-pose_int8.bin" ]]; then
+    echo "[ Info ] Skipping YOLOv11m-pose conversion (already exists)"
+else
+    echo "[ Info ] Converting YOLOv11m-pose with COCO calibration..."
+    python3 "download-models/yolo_downloader.py" -m yolo11m-pose -i "${datasetdir}" -o "${modeldir}"
+fi
+echo ""
+if [[ -f "${modeldir}/yolov8n-seg/yolov8n-seg_int8.xml" && -f "${modeldir}/yolov8n-seg/yolov8n-seg_int8.bin" ]]; then
+    echo "[ Info ] Skipping YOLOv8n-seg conversion (already exists)"
+else
+    echo "[ Info ] Converting YOLOv8n-seg with COCO calibration..."
+    python3 "download-models/yolo_downloader.py" -m yolov8n-seg -i "${datasetdir}" -o "${modeldir}"
+fi
 echo ""
 
-echo "[ Info ] Downloading pre-converted YOLOv5m model..."
 mkdir -p "${modeldir}/yolo-v5m"
-
-download_raw "https://raw.githubusercontent.com/dlstreamer/pipeline-zoo-models/refs/heads/main/storage/yolov5m-640_INT8/FP16-INT8/yolov5m-640_INT8.xml" "${modeldir}/yolo-v5m/yolov5m-640_INT8.xml"
-download_raw "https://raw.githubusercontent.com/dlstreamer/pipeline-zoo-models/refs/heads/main/storage/yolov5m-640_INT8/FP16-INT8/yolov5m-640_INT8.bin" "${modeldir}/yolo-v5m/yolov5m-640_INT8.bin"
-download_raw "https://raw.githubusercontent.com/dlstreamer/pipeline-zoo-models/refs/heads/main/storage/yolov5m-640_INT8/yolo-v5.json" "${modeldir}/yolo-v5m/yolo-v5.json"
+if [[ -f "${modeldir}/yolo-v5m/yolov5m-640_INT8.xml" && -f "${modeldir}/yolo-v5m/yolov5m-640_INT8.bin" ]]; then
+    echo "[ Info ] Skipping YOLOv5m download (already exists)"
+else
+    echo "[ Info ] Downloading pre-converted YOLOv5m model..."
+    download_raw "https://raw.githubusercontent.com/dlstreamer/pipeline-zoo-models/refs/heads/main/storage/yolov5m-640_INT8/FP16-INT8/yolov5m-640_INT8.xml" "${modeldir}/yolo-v5m/yolov5m-640_INT8.xml"
+    download_raw "https://raw.githubusercontent.com/dlstreamer/pipeline-zoo-models/refs/heads/main/storage/yolov5m-640_INT8/FP16-INT8/yolov5m-640_INT8.bin" "${modeldir}/yolo-v5m/yolov5m-640_INT8.bin"
+    download_raw "https://raw.githubusercontent.com/dlstreamer/pipeline-zoo-models/refs/heads/main/storage/yolov5m-640_INT8/yolo-v5.json" "${modeldir}/yolo-v5m/yolo-v5.json"
+fi
 
 mkdir -p "${modeldir}/resnet-50" "${modeldir}/mobilenet-v2"
 download_raw "https://raw.githubusercontent.com/open-edge-platform/dlstreamer/refs/heads/main/samples/gstreamer/model_proc/public/classification-optimized.json" "${modeldir}/resnet-50/resnet-50.json"
@@ -149,6 +191,7 @@ mkdir -p \
     "${pipedir}/heavy/classification"
 
 mkdir -p "${pipedir}/light/detection/yolov11n_640x640/INT8/"
+mkdir -p "${pipedir}/medium/detection/yolov11s_640x640/INT8/"
 mkdir -p "${pipedir}/medium/detection/yolov5m_640x640/INT8/"
 mkdir -p "${pipedir}/heavy/detection/yolov11m_640x640/INT8/"
 
@@ -171,6 +214,9 @@ cp -r "${pipedir}/medium/classification/mobilenet-v2-1.0-224-tf" "${pipedir}/hea
 
 cp "${modeldir}/yolo11n/yolo11n_int8.xml" "${pipedir}/light/detection/yolov11n_640x640/INT8/yolo11n.xml"
 cp "${modeldir}/yolo11n/yolo11n_int8.bin" "${pipedir}/light/detection/yolov11n_640x640/INT8/yolo11n.bin"
+
+cp "${modeldir}/yolo11s/yolo11s_int8.xml" "${pipedir}/medium/detection/yolov11s_640x640/INT8/yolo11s.xml"
+cp "${modeldir}/yolo11s/yolo11s_int8.bin" "${pipedir}/medium/detection/yolov11s_640x640/INT8/yolo11s.bin"
 
 cp "${modeldir}/yolo-v5m/yolov5m-640_INT8.xml" "${pipedir}/medium/detection/yolov5m_640x640/INT8/."
 cp "${modeldir}/yolo-v5m/yolov5m-640_INT8.bin" "${pipedir}/medium/detection/yolov5m_640x640/INT8/."
@@ -208,6 +254,10 @@ echo "Detection Models:"
 validate_model "YOLOv11n (light)" \
     "${pipedir}/light/detection/yolov11n_640x640/INT8/yolo11n.xml" \
     "${pipedir}/light/detection/yolov11n_640x640/INT8/yolo11n.bin" || ((failed++))
+
+validate_model "YOLOv11s (medium)" \
+    "${pipedir}/medium/detection/yolov11s_640x640/INT8/yolo11s.xml" \
+    "${pipedir}/medium/detection/yolov11s_640x640/INT8/yolo11s.bin" || ((failed++))
 
 validate_model "YOLOv5m (medium)" \
     "${pipedir}/medium/detection/yolov5m_640x640/INT8/yolov5m-640_INT8.xml" \
