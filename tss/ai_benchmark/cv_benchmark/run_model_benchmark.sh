@@ -28,9 +28,10 @@ if [[ -f /etc/os-release ]]; then
     elif [[ "${VERSION_ID}" == "24.04" ]]; then
         IMAGE="intel/dlstreamer:2025.2.0-ubuntu24"
     else
-        echo -e "\033[0;31m[ERROR]\033[0m Unsupported Ubuntu version: ${VERSION_ID}"
-        echo "Supported versions: 22.04, 24.04"
-        exit 1
+	IMAGE="intel/dlstreamer:2025.2.0-ubuntu24"
+#        echo -e "\033[0;31m[ERROR]\033[0m Unsupported Ubuntu version: ${VERSION_ID}"
+#        echo "Supported versions: 22.04, 24.04"
+#        exit 1
     fi
 else
     echo -e "\033[0;31m[ERROR]\033[0m Cannot detect OS version (/etc/os-release not found)"
@@ -40,7 +41,6 @@ MOUNT_DIR="/home/intel"
 CONTAINER_NAME="model_benchmark_$$"
 DEVICE="GPU.0"
 BATCH_SIZES="1 4 8 16 32 64 128"
-# BATCH_SIZES="16"
 MODEL_PATH=""
 TEST_ALL=false
 NUM_PROCESSES=1
@@ -51,10 +51,10 @@ MODELS=(
    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11n/yolo11n_int8.xml"
    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11s/yolo11s_fp32.xml"
    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11s/yolo11s_int8.xml"
-#    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11m-pose/yolo11m-pose_fp32.xml"
-#    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11m-pose/yolo11m-pose_int8.xml"
-#    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolov8n-seg/yolov8n-seg_fp32.xml"
-#    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolov8n-seg/yolov8n-seg_int8.xml"
+    # "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11m-pose/yolo11m-pose_fp32.xml"
+    # "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11m-pose/yolo11m-pose_int8.xml"
+    # "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolov8n-seg/yolov8n-seg_fp32.xml"
+    # "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolov8n-seg/yolov8n-seg_int8.xml"
 )
 
 # Color output
