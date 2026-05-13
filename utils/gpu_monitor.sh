@@ -32,6 +32,11 @@ cleanup_and_plot() {
             if [[ -f "$PLOT_SCRIPT" ]]; then
                 echo "[GPU Monitor] Running plot generation..."
                 PLOT_LOG="${OUTPUT_DIR}/plot_generation.log"
+                # Auto-install dependencies if missing
+                if ! python3 -c "import pandas, matplotlib" 2>/dev/null; then
+                    echo "[GPU Monitor] Installing pandas and matplotlib..."
+                    python3 -m pip install --quiet pandas matplotlib 2>&1 | tail -n3
+                fi
                 if python3 "$PLOT_SCRIPT" "$OUTPUT_FILE" 2>&1 | tee "$PLOT_LOG"; then
                     echo "[GPU Monitor] ✓ GPU metrics plots generated successfully"
                     echo "[GPU Monitor]   - ${OUTPUT_DIR}/gpu_metrics_main.png"
