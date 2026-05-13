@@ -12,7 +12,7 @@ pipedir="${basedir}/../pipelines"
 
 usage() {
 echo "
-Downloads, converts, and quantizes Yolo-v11n/s/m, Resnet-50, and Mobilenet-V2
+Downloads, converts, and quantizes Yolo-v11n/s/m, Resnet-50, Mobilenet-V2, and ViT-base-patch32-224
 
 Usage:
 convert_models.sh -i <ImageNet Root Dir>
@@ -164,6 +164,17 @@ else
 fi
 echo ""
 
+# ViT model (classification, quantized with COCO val2017)
+if [[ -f "${modeldir}/vit-base-patch32-224/vit-base-patch32-224-in21k_int8.xml" && -f "${modeldir}/vit-base-patch32-224/vit-base-patch32-224-in21k_int8.bin" ]]; then
+    echo "[ Info ] Skipping ViT-base-patch32-224 conversion (already exists)"
+else
+    echo "[ Info ] Converting ViT-base-patch32-224 with COCO calibration..."
+    python3 "${basedir}/download-models/vit_downloader.py" \
+        -o "${modeldir}/vit-base-patch32-224" \
+        -i "${datasetdir}/coco/images/val2017"
+fi
+echo ""
+
 mkdir -p "${modeldir}/yolo-v5m"
 if [[ -f "${modeldir}/yolo-v5m/yolov5m-640_INT8.xml" && -f "${modeldir}/yolo-v5m/yolov5m-640_INT8.bin" ]]; then
     echo "[ Info ] Skipping YOLOv5m download (already exists)"
@@ -197,6 +208,7 @@ mkdir -p "${pipedir}/heavy/detection/yolov11m_640x640/INT8/"
 
 mkdir -p "${pipedir}/medium/classification/resnet-v1-50-tf/INT8/"
 mkdir -p "${pipedir}/medium/classification/mobilenet-v2-1.0-224-tf/INT8/"
+mkdir -p "${pipedir}/medium/classification/vit-base-patch32-224/INT8/"
 
 echo "[ Info ] Copying models to pipeline directories..."
 
@@ -211,6 +223,10 @@ cp "${modeldir}/mobilenet-v2/mobilenetv2_int8.xml" "${pipedir}/medium/classifica
 cp "${modeldir}/mobilenet-v2/mobilenetv2_int8.bin" "${pipedir}/medium/classification/mobilenet-v2-1.0-224-tf/INT8/mobilenet-v2-1.0-224.bin"
 cp "${modeldir}/mobilenet-v2/mobilenet-v2.json" "${pipedir}/medium/classification/mobilenet-v2-1.0-224-tf/."
 cp -r "${pipedir}/medium/classification/mobilenet-v2-1.0-224-tf" "${pipedir}/heavy/classification/."
+
+cp "${modeldir}/vit-base-patch32-224/vit-base-patch32-224-in21k_int8.xml" "${pipedir}/medium/classification/vit-base-patch32-224/INT8/vit-base-patch32-224.xml"
+cp "${modeldir}/vit-base-patch32-224/vit-base-patch32-224-in21k_int8.bin" "${pipedir}/medium/classification/vit-base-patch32-224/INT8/vit-base-patch32-224.bin"
+cp -r "${pipedir}/medium/classification/vit-base-patch32-224" "${pipedir}/heavy/classification/."
 
 cp "${modeldir}/yolo11n/yolo11n_int8.xml" "${pipedir}/light/detection/yolov11n_640x640/INT8/yolo11n.xml"
 cp "${modeldir}/yolo11n/yolo11n_int8.bin" "${pipedir}/light/detection/yolov11n_640x640/INT8/yolo11n.bin"
@@ -278,6 +294,10 @@ validate_model "ResNet-50" \
 validate_model "MobileNet-v2" \
     "${pipedir}/medium/classification/mobilenet-v2-1.0-224-tf/INT8/mobilenet-v2-1.0-224.xml" \
     "${pipedir}/medium/classification/mobilenet-v2-1.0-224-tf/INT8/mobilenet-v2-1.0-224.bin" || ((failed++))
+
+validate_model "ViT-base-patch32-224" \
+    "${pipedir}/medium/classification/vit-base-patch32-224/INT8/vit-base-patch32-224.xml" \
+    "${pipedir}/medium/classification/vit-base-patch32-224/INT8/vit-base-patch32-224.bin" || ((failed++))
 
 echo ""
 if [[ $failed -eq 0 ]]; then

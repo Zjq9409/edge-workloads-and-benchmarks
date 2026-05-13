@@ -13,3 +13,4 @@ torch
 torchvision
 kagglehub
 opencv-python
+transformers

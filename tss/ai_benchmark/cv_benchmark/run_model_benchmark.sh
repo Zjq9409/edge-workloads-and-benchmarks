@@ -40,17 +40,19 @@ fi
 MOUNT_DIR="/home/intel"
 CONTAINER_NAME="model_benchmark_$$"
 DEVICE="GPU.0"
-BATCH_SIZES="1 4 8 16 32 64 128"
+BATCH_SIZES="1 4 8 16 32 64"
 MODEL_PATH=""
 TEST_ALL=false
 NUM_PROCESSES=1
 
 # Model paths (from model-conversion/models directory)
 MODELS=(
-   "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11n/yolo11n_fp32.xml"
-   "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11n/yolo11n_int8.xml"
-   "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11s/yolo11s_fp32.xml"
-   "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11s/yolo11s_int8.xml"
+#    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11n/yolo11n_fp32.xml"
+#    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11n/yolo11n_int8.xml"
+#    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11s/yolo11s_fp32.xml"
+#    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11s/yolo11s_int8.xml"
+   "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/vit-base-patch32-224/vit-base-patch32-224-in21k.xml"
+   "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/vit-base-patch32-224/vit-base-patch32-224-in21k_int8.xml"
     # "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11m-pose/yolo11m-pose_fp32.xml"
     # "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11m-pose/yolo11m-pose_int8.xml"
     # "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolov8n-seg/yolov8n-seg_fp32.xml"
@@ -116,9 +118,9 @@ fi
 # Results directory
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 if [[ ${NUM_PROCESSES} -gt 1 ]]; then
-    RESULTS_DIR="./benchmark_results_${NUM_PROCESSES}proc_${TIMESTAMP}"
+    RESULTS_DIR="$(pwd)/benchmark_results_${NUM_PROCESSES}proc_${TIMESTAMP}"
 else
-    RESULTS_DIR="./benchmark_results_${TIMESTAMP}"
+    RESULTS_DIR="$(pwd)/benchmark_results_${TIMESTAMP}"
 fi
 mkdir -p "${RESULTS_DIR}"
 
@@ -221,6 +223,13 @@ test_model() {
         echo ""
     } > "${log_file}"
     
+    # Determine input shape based on model type (ViT: 224x224, others: 640x640)
+    if [[ "${model_name}" == *"vit"* ]]; then
+        INPUT_SIZE=224
+    else
+        INPUT_SIZE=640
+    fi
+
     # Extract device ID from DEVICE (e.g., GPU.0 -> 0)
     local device_id="${DEVICE##*.}"
     local gpu_monitor_script="$(cd "$(dirname "$0")/../../../utils" && pwd)/gpu_monitor.sh"
@@ -256,7 +265,7 @@ test_model() {
             
             # Run benchmark_app in container
             docker exec "${CONTAINER_NAME}" bash -c \
-                "benchmark_app -m ${model_path} --batch_size ${bs} -d ${DEVICE}  -hint throughput -shape [${bs},3,640,640]" \
+                "benchmark_app -m ${model_path} --batch_size ${bs} -d ${DEVICE} -hint throughput -shape [${bs},3,${INPUT_SIZE},${INPUT_SIZE}]" \
                 >> "${log_file}" 2>&1
             
             # Stop GPU monitoring (will auto-generate plots on exit)
@@ -312,7 +321,7 @@ test_model() {
                 # Run benchmark_app in background
                 (
                     docker exec "${CONTAINER_NAME}" bash -c \
-                        "benchmark_app -m ${model_path} --batch_size ${bs} -d ${DEVICE} -hint throughput -shape [${bs},3,640,640]"
+                        "benchmark_app -m ${model_path} --batch_size ${bs} -d ${DEVICE} -hint throughput -shape [${bs},3,${INPUT_SIZE},${INPUT_SIZE}]"
                 ) > "${process_log}" 2>&1 &
                 
                 pids+=($!)
