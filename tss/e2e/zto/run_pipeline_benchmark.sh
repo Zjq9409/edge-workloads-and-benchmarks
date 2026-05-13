@@ -25,7 +25,8 @@ if [[ -f /etc/os-release ]]; then
     if [[ "${VERSION_ID}" == "22.04" ]]; then
         IMAGE="intel/dlstreamer:2025.2.0-ubuntu22"
     elif [[ "${VERSION_ID}" == "24.04" ]]; then
-        IMAGE="intel/dlstreamer:2025.2.0-ubuntu24"
+        #IMAGE="intel/dlstreamer:2025.2.0-ubuntu24"
+        IMAGE="intel/dlstreamer:2026.0.0-ubuntu24"
     else
         echo -e "\033[0;31m[ERROR]\033[0m Unsupported Ubuntu version: ${VERSION_ID}"
         echo "Supported versions: 22.04, 24.04"
@@ -560,7 +561,7 @@ echo ""
 if [[ -z "${GPU_CARD}" ]]; then
     # Auto-detect based on device parameter
     if [[ "${DEVICE}" == "GPU.0" ]]; then
-        CARD_DEV="/dev/dri/card0"
+        CARD_DEV="/dev/dri/card1"
         RENDER_DEV="/dev/dri/renderD128"
     elif [[ "${DEVICE}" == "GPU.1" ]]; then
         CARD_DEV="/dev/dri/card1"
@@ -609,7 +610,7 @@ docker run -d \
     --device="${RENDER_DEV}" \
     --net=host \
     -v "${MOUNT_DIR}":/home/dlstreamer/work \
-    -e PYTHONPATH="/opt/intel/dlstreamer/python" \
+    -e PYTHONPATH="/opt/intel/dlstreamer/gstreamer/lib/python3/dist-packages:/opt/intel/dlstreamer/python" \
     -u root \
     "${IMAGE}" tail -f /dev/null >/dev/null
 

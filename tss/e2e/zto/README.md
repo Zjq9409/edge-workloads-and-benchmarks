@@ -17,7 +17,7 @@ Supports multi-process execution for high-density testing and automatic tuning t
 
 ```bash
 # AI pipeline with FP32 model (32 streams, 4 processes)
-./run_pipeline_benchmark.sh -n 32 -P 4 -d GPU.0 -b 32 -a 
+./run_pipeline_benchmark.sh -n 32 -P 4 -d GPU.0 -b 16 -a 
 
 # AI pipeline with INT8 model (higher performance)
 ./run_pipeline_benchmark.sh -n 48 -P 6 -d GPU.0 -b 32 -a -int8 

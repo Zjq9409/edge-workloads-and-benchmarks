@@ -7,17 +7,15 @@
 
 set -e
 
-INPUT=${1:-head-pose-face-detection-female-and-male.mp4}
-DETECT_MODEL_PATH=${2:-/home/intel/leo/models/ov-models/yolo11n/FP16/yolo11n.xml}
-DEVICE=${3:-GPU}
-OUTPUT=${4:-fps} # Supported values: display, fps
+INPUT=${1:-1192116-sd_640_360_30fps.mp4}
+OUTPUT=${2:-fps} # Supported values: display, fps
 
 PYTHON_SCRIPT=simple_vlm_invoker.py
 
 if [[ $OUTPUT == "display" ]] || [[ -z $OUTPUT ]]; then
-  SINK_ELEMENT="gvawatermark ! videoconvert ! gvafpscounter ! autovideosink sync=false"
+  SINK_ELEMENT=" autovideosink sync=false"
 elif [[ $OUTPUT == "fps" ]]; then
-  SINK_ELEMENT="gvafpscounter ! fakesink async=false "
+  SINK_ELEMENT=" fakesink async=false "
 else
   echo Error wrong value for OUTPUT parameter
   echo Valid values: "display" - render to screen, "fps" - print FPS
@@ -36,9 +34,9 @@ echo Running sample with the following parameters:
 echo GST_PLUGIN_PATH="${GST_PLUGIN_PATH}"
 
 read -r PIPELINE << EOM
-gst-launch-1.0 $SOURCE_ELEMENT ! decodebin3 ! gvadetect model=$DETECT_MODEL_PATH device=$DEVICE ! queue ! gvapython module=$PYTHON_SCRIPT class=CallVLM function=process_frame ! $SINK_ELEMENT 
+gst-launch-1.0 $SOURCE_ELEMENT ! decodebin3 ! video/x-raw\(memory:VAMemory\),format=NV12 ! gvafpscounter ! vajpegenc ! gvapython module=$PYTHON_SCRIPT class=CallVLM function=process_frame ! $SINK_ELEMENT 
 EOM
 
 echo "${PIPELINE}"
 PYTHONPATH=$PYTHONPATH:$(dirname "$0")/../../../../python \
-$PIPELINE
+eval "$PIPELINE"

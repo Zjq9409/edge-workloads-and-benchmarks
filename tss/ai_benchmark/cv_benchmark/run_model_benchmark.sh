@@ -40,6 +40,7 @@ MOUNT_DIR="/home/intel"
 CONTAINER_NAME="model_benchmark_$$"
 DEVICE="GPU.0"
 BATCH_SIZES="1 4 8 16 32 64 128"
+# BATCH_SIZES="16"
 MODEL_PATH=""
 TEST_ALL=false
 NUM_PROCESSES=1
@@ -47,11 +48,11 @@ NUM_PROCESSES=1
 # Model paths (from model-conversion/models directory)
 MODELS=(
     "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11n/yolo11n_fp32.xml"
-    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11n/yolo11n_int8.xml"
-    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11m-pose/yolo11m-pose_fp32.xml"
-    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11m-pose/yolo11m-pose_int8.xml"
-    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolov8n-seg/yolov8n-seg_fp32.xml"
-    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolov8n-seg/yolov8n-seg_int8.xml"
+   "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11n/yolo11n_int8.xml"
+#    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11m-pose/yolo11m-pose_fp32.xml"
+#    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11m-pose/yolo11m-pose_int8.xml"
+#    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolov8n-seg/yolov8n-seg_fp32.xml"
+#    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolov8n-seg/yolov8n-seg_int8.xml"
 )
 
 # Color output
@@ -141,10 +142,10 @@ echo ""
 # Detect GPU card and render device
 if [[ -z "${GPU_CARD}" ]]; then
     if [[ "${DEVICE}" == "GPU.0" ]]; then
-        CARD_DEV="/dev/dri/card0"
+        CARD_DEV="/dev/dri/card1"
         RENDER_DEV="/dev/dri/renderD128"
     else
-        CARD_DEV="/dev/dri/card0"
+        CARD_DEV="/dev/dri/card1"
         RENDER_DEV="/dev/dri/renderD128"
     fi
 else
