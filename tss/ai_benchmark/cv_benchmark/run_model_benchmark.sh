@@ -47,8 +47,10 @@ NUM_PROCESSES=1
 
 # Model paths (from model-conversion/models directory)
 MODELS=(
-    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11n/yolo11n_fp32.xml"
+   "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11n/yolo11n_fp32.xml"
    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11n/yolo11n_int8.xml"
+   "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11s/yolo11s_fp32.xml"
+   "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11s/yolo11s_int8.xml"
 #    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11m-pose/yolo11m-pose_fp32.xml"
 #    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolo11m-pose/yolo11m-pose_int8.xml"
 #    "/home/intel/media_ai/edge-workloads-and-benchmarks/model-conversion/models/yolov8n-seg/yolov8n-seg_fp32.xml"
@@ -142,7 +144,7 @@ echo ""
 # Detect GPU card and render device
 if [[ -z "${GPU_CARD}" ]]; then
     if [[ "${DEVICE}" == "GPU.0" ]]; then
-        CARD_DEV="/dev/dri/card1"
+        CARD_DEV="/dev/dri/card0"
         RENDER_DEV="/dev/dri/renderD128"
     else
         CARD_DEV="/dev/dri/card1"
