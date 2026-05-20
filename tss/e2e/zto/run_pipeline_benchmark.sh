@@ -654,6 +654,15 @@ sudo -v || {
     exit 1
 }
 
+# Check and install Python dependencies for GPU metrics plotting
+if ! python3 -c "import pandas, matplotlib" 2>/dev/null; then
+    echo -e "${YELLOW}[INFO]${NC} Installing Python dependencies (pandas, matplotlib)..."
+    sudo apt-get install -y python3-pandas python3-matplotlib || {
+        echo -e "${RED}[ERROR]${NC} Failed to install Python dependencies"
+        exit 1
+    }
+fi
+
 # Start GPU monitoring
 MONITOR_PID=""
 if [[ -f "${GPU_MONITOR_SCRIPT}" ]]; then

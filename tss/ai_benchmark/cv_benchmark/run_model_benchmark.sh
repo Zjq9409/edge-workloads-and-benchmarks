@@ -146,7 +146,7 @@ echo ""
 # Detect GPU card and render device
 if [[ -z "${GPU_CARD}" ]]; then
     if [[ "${DEVICE}" == "GPU.0" ]]; then
-        CARD_DEV="/dev/dri/card0"
+        CARD_DEV="/dev/dri/card1"
         RENDER_DEV="/dev/dri/renderD128"
     else
         CARD_DEV="/dev/dri/card1"
@@ -182,6 +182,15 @@ sudo -v || {
     echo -e "${RED}[ERROR]${NC} Failed to obtain sudo access"
     exit 1
 }
+
+# Check and install Python dependencies for GPU metrics plotting
+if ! python3 -c "import pandas, matplotlib" 2>/dev/null; then
+    echo -e "${YELLOW}[INFO]${NC} Installing Python dependencies (pandas, matplotlib)..."
+    sudo apt-get install -y python3-pandas python3-matplotlib || {
+        echo -e "${RED}[ERROR]${NC} Failed to install Python dependencies"
+        exit 1
+    }
+fi
 
 # Start container
 echo -e "${YELLOW}[INFO]${NC} Creating container: ${CONTAINER_NAME}"
