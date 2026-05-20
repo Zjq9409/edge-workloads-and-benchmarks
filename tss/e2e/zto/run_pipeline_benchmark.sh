@@ -25,8 +25,8 @@ if [[ -f /etc/os-release ]]; then
     if [[ "${VERSION_ID}" == "22.04" ]]; then
         IMAGE="intel/dlstreamer:2025.2.0-ubuntu22"
     elif [[ "${VERSION_ID}" == "24.04" ]]; then
-        #IMAGE="intel/dlstreamer:2025.2.0-ubuntu24"
-        IMAGE="intel/dlstreamer:2026.0.0-ubuntu24"
+        IMAGE="intel/dlstreamer:2025.2.0-ubuntu24"
+        # IMAGE="intel/dlstreamer:2026.0.0-ubuntu24"
     else
         echo -e "\033[0;31m[ERROR]\033[0m Unsupported Ubuntu version: ${VERSION_ID}"
         echo "Supported versions: 22.04, 24.04"
@@ -49,7 +49,7 @@ MODEL_PATH_INT8="/home/dlstreamer/work/model-conversion/models/yolo11n/yolo11n_i
 MODEL_PATH_FP32="/home/dlstreamer/work/model-conversion/models/yolo11n/yolo11n_fp32.xml"
 MODEL_PATH="${MODEL_PATH_FP32}"  # Default to FP32
 USE_INT8=false
-ENABLE_AI=true  # Default: run full AI pipeline
+ENABLE_AI=false  # Default: decode-only pipeline (use -a to enable AI)
 MQTT_ADDRESS="localhost:1883"
 PYTHON_MODULE="/home/dlstreamer/add_data.py"  # Default: enable metadata processing and MQTT
 AUTO_TUNE=false
